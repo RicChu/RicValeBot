@@ -39,6 +39,7 @@ class TownTeleportController:
         self.waystone = self._make_detector(config.waystone_template_path)
         self.waystone_confirm = self._make_detector(config.waystone_confirm_template_path)
         self.destination = self._make_detector(config.destination.template_path)
+        self.teleport_confirm = self._make_detector(config.teleport_confirm_template_path)
         self._phase = "idle"
         self._stage_started_at = float("-inf")
         self._last_action_at = float("-inf")
@@ -60,6 +61,9 @@ class TownTeleportController:
     def _reset(self) -> None:
         self._phase = "idle"
         self._stage_started_at = float("-inf")
+
+    def reset(self) -> None:
+        self._reset()
 
     def _advance(self, phase: str, now: float, action: TeleportAction) -> TeleportAction:
         self._phase = phase
@@ -92,7 +96,8 @@ class TownTeleportController:
             "consumables": (self.consumables, "click", "consumables", "waystone"),
             "waystone": (self.waystone, "double_click", "waystone", "waystone_confirm"),
             "waystone_confirm": (self.waystone_confirm, "click", "waystone_confirm", "destination"),
-            "destination": (self.destination, "click", f"map:{self.config.destination.name}", "await_departure"),
+            "destination": (self.destination, "click", f"map:{self.config.destination.name}", "teleport_confirm"),
+            "teleport_confirm": (self.teleport_confirm, "click", "teleport_confirm", "await_departure"),
         }
         if self._phase == "await_departure":
             if not self.town_minimap.detect(frame_bgr):

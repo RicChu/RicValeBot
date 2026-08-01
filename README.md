@@ -186,7 +186,7 @@ login_recovery:
 
 ## 主城傳送石
 
-`town_teleport` 以右上角主城小地圖作為起點判斷。偵測到主城後會暫停走路、技能與 HSV，依序執行：`B` → 消耗品圖示 → 傳送石雙擊 → 傳送石確認 → 指定地圖縮圖。每一階段只有在下一個範本出現時才會前進；8 秒內未出現即停止，不會任意點擊。
+`town_teleport` 以右上角主城小地圖作為起點判斷。偵測到主城後會暫停走路、技能與 HSV，依序執行：`B` → 消耗品圖示 → 傳送石雙擊 → 傳送石確認 → 指定地圖縮圖 → 「傳送」按鈕。每一階段只有在下一個範本出現時才會前進；8 秒內未出現即停止，不會任意點擊。
 
 ```yaml
 town_teleport:
@@ -199,9 +199,21 @@ town_teleport:
   consumables_template_path: assets/teleport/consumables.png
   waystone_template_path: assets/teleport/waystone.png
   waystone_confirm_template_path: assets/teleport/waystone_confirm.png
+  teleport_confirm_template_path: assets/teleport/teleport_confirm.png
   destination:
     name: demon_mouth
     template_path: assets/teleport/maps/demon_mouth.png
 ```
 
 地圖縮圖都放在 `assets/teleport/maps/`。新增目的地時，放入新的裁圖、將 `destination.name` 改成識別名稱，並把 `template_path` 指向新檔案。`town_minimap_roi` 是目前 2560×1440 視窗的設定；若改變遊戲解析度，需重新裁小地圖並更新這個範圍。
+
+## 死亡回復
+
+死亡回復與登入回復是獨立狀態。只要辨識到「在城鎮重生」按鈕，死亡回復就會取消正在進行的登入與傳送步驟、釋放 WASD、清空技能，再點擊一次重生。死亡視窗還在時不會重複點擊；視窗消失後，程式才重新依目前位置決定是否需要主城傳送。
+
+```yaml
+death_recovery:
+  enabled: true
+  threshold: 0.82
+  town_respawn_template_path: assets/death/town_respawn.png
+```

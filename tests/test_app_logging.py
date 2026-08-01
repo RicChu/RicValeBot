@@ -12,6 +12,7 @@ from screen_automation.app import AutomationApp
 from screen_automation.combat import CombatController, CrowdSkillGroup
 from screen_automation.config import CenterROIConfig
 from screen_automation.detector import DetectionResult
+from screen_automation.death_recovery import DeathAction
 from screen_automation.login_recovery import LoginAction
 from screen_automation.town_teleport import TeleportAction
 from screen_automation.window import WindowInfo
@@ -57,6 +58,22 @@ def make_app(result: DetectionResult | None) -> AutomationApp:
 
 
 class AppLoggingTests(unittest.TestCase):
+    def test_death_action_cancels_login_and_teleport_before_clicking_respawn(self) -> None:
+        app = make_app(None)
+        app.config.action.dry_run = False
+        resets: list[str] = []
+        app.login_recovery = SimpleNamespace(reset=lambda: resets.append("login"))
+        app.town_teleport = SimpleNamespace(reset=lambda: resets.append("teleport"))
+        app.movement_input = SimpleNamespace(set_movement=lambda *_: None, release=lambda *_: None)
+        app.skill_input = SimpleNamespace(clear=lambda: resets.append("skills"))
+        window = WindowInfo(hwnd=7, title="Target", left=300, top=400, width=500, height=400)
+
+        with patch("screen_automation.app.click_screen_position") as click:
+            app._handle_death_action(window, DeathAction("town_respawn", 100, 200))
+
+        self.assertEqual(resets, ["login", "teleport", "skills"])
+        click.assert_called_once_with((400, 600))
+
     def test_teleport_key_action_pauses_existing_inputs_before_pressing_b(self) -> None:
         app = make_app(None)
         app.config.action.dry_run = False

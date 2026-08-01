@@ -12,6 +12,7 @@ import win32api
 from .center_target import is_inside_window_center_radius
 from .combat import CombatController, CrowdSkillGroup, directions_toward_target, select_nearest_to_center, steer_away_from_target
 from .config import AppConfig
+from .death_recovery import DeathAction, DeathRecoveryController
 from .detector import DetectionResult, MultiTemplateDetector
 from .hsv_bar import HSVBarDetector
 from .input_coordinator import MovementInput, SkillTapQueue
@@ -120,6 +121,11 @@ class AutomationApp:
             if config.town_teleport.enabled
             else None
         )
+        self.death_recovery = (
+            DeathRecoveryController(config.death_recovery, base_dir=base_dir)
+            if config.death_recovery.enabled
+            else None
+        )
 
     def stop(self) -> None:
         if self.current_hwnd and not self.config.action.dry_run:
@@ -198,6 +204,18 @@ class AutomationApp:
             raise ValueError(f"Unsupported teleport action: {action.kind}")
         logging.info("Town teleport action; action=%s; position=%s", action.label, position)
 
+    def _handle_death_action(self, window: WindowInfo, action: DeathAction) -> None:
+        if login_recovery := getattr(self, "login_recovery", None):
+            login_recovery.reset()
+        if town_teleport := getattr(self, "town_teleport", None):
+            town_teleport.reset()
+        self._pause_for_login(window)
+        if self.config.action.dry_run:
+            return
+        position = (window.left + action.x, window.top + action.y)
+        click_screen_position(position)
+        logging.info("Death recovery action; action=%s; position=%s", action.label, position)
+
     def _route_player_position(self, minimap: np.ndarray, marker_position: tuple[int, int] | None) -> tuple[int, int] | None:
         if marker_position is None:
             return None
@@ -226,6 +244,18 @@ class AutomationApp:
             self.current_hwnd = window.hwnd
             frame = self.capture(window)
             captured_at = time.monotonic()
+            death_recovery = getattr(self, "death_recovery", None)
+            if death_recovery:
+                death_action = death_recovery.handle(frame)
+                if death_recovery.active:
+                    if death_action:
+                        self._handle_death_action(window, death_action)
+                    else:
+                        self._pause_for_login(window)
+                    if once:
+                        return
+                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    continue
             login_recovery = getattr(self, "login_recovery", None)
             if login_recovery:
                 login_action = login_recovery.handle(frame, captured_at)

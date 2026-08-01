@@ -29,6 +29,7 @@ def teleport_config() -> SimpleNamespace:
         consumables_template_path="consumables.png",
         waystone_template_path="waystone.png",
         waystone_confirm_template_path="confirm.png",
+        teleport_confirm_template_path="teleport.png",
         destination=SimpleNamespace(name="demon_mouth", template_path="demon_mouth.png"),
     )
 
@@ -42,18 +43,20 @@ class TownTeleportControllerTests(unittest.TestCase):
             "waystone.png": DetectionResult(0.95, 30, 40, 20, 20),
             "confirm.png": DetectionResult(0.95, 40, 50, 20, 20),
             "demon_mouth.png": DetectionResult(0.95, 50, 60, 20, 20),
+            "teleport.png": DetectionResult(0.95, 60, 70, 20, 20),
         }
 
     def test_runs_the_configured_teleport_sequence(self) -> None:
         controller = TownTeleportController(teleport_config(), lambda path, _threshold: FakeDetector(self.matches[path]))
 
-        actions = [controller.handle(self.frame, now) for now in range(5)]
+        actions = [controller.handle(self.frame, now) for now in range(6)]
 
         self.assertEqual((actions[0].kind, actions[0].key), ("key", "B"))
         self.assertEqual((actions[1].kind, actions[1].label, actions[1].x, actions[1].y), ("click", "consumables", 20, 30))
         self.assertEqual((actions[2].kind, actions[2].label, actions[2].x, actions[2].y), ("double_click", "waystone", 40, 50))
         self.assertEqual((actions[3].kind, actions[3].label, actions[3].x, actions[3].y), ("click", "waystone_confirm", 50, 60))
         self.assertEqual((actions[4].kind, actions[4].label, actions[4].x, actions[4].y), ("click", "map:demon_mouth", 60, 70))
+        self.assertEqual((actions[5].kind, actions[5].label, actions[5].x, actions[5].y), ("click", "teleport_confirm", 70, 80))
 
     def test_unknown_frame_does_not_start_teleport(self) -> None:
         controller = TownTeleportController(teleport_config(), lambda _path, _threshold: FakeDetector(None))

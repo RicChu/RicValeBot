@@ -144,6 +144,7 @@ town_teleport:
   consumables_template_path: assets/teleport/consumables.png
   waystone_template_path: assets/teleport/waystone.png
   waystone_confirm_template_path: assets/teleport/waystone_confirm.png
+  teleport_confirm_template_path: assets/teleport/teleport_confirm.png
   destination: {name: demon_mouth, template_path: assets/teleport/maps/demon_mouth.png}
 """
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -155,6 +156,29 @@ town_teleport:
         self.assertEqual(config.town_teleport.destination.name, "demon_mouth")
         self.assertEqual(config.town_teleport.stage_timeout_ms, 8000)
         self.assertEqual(config.town_teleport.town_minimap_roi, (2200, 0, 360, 410))
+        self.assertEqual(config.town_teleport.teleport_confirm_template_path, "assets/teleport/teleport_confirm.png")
+
+    def test_reads_death_recovery_configuration(self) -> None:
+        content = """
+target_window_title: Target
+capture: {method: mss, fallback_to_desktop: true}
+detection: {template_paths: [], negative_template_paths: [], threshold: 0.5, roi: null}
+action: {key: '3', dry_run: true, key_hold_ms: 0, repeat_interval_ms: 20}
+pointer: {offset_y: -50}
+center_target: {template_paths: [], radius_px: 250, key: '2', key_hold_ms: 0, repeat_interval_ms: 500}
+runtime: {poll_interval_ms: 20, save_debug_frame: false, debug_frame_path: debug/latest_detection.png}
+death_recovery:
+  enabled: true
+  threshold: 0.82
+  town_respawn_template_path: assets/death/town_respawn.png
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.yaml"
+            path.write_text(content, encoding="utf-8")
+            config = load_config(path)
+
+        self.assertTrue(config.death_recovery.enabled)
+        self.assertEqual(config.death_recovery.town_respawn_template_path, "assets/death/town_respawn.png")
 
 
 if __name__ == "__main__":

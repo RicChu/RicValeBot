@@ -185,7 +185,15 @@ class TownTeleportConfig:
     consumables_template_path: str
     waystone_template_path: str
     waystone_confirm_template_path: str
+    teleport_confirm_template_path: str
     destination: TownTeleportDestinationConfig
+
+
+@dataclass(frozen=True)
+class DeathRecoveryConfig:
+    enabled: bool
+    threshold: float
+    town_respawn_template_path: str
 
 
 @dataclass(frozen=True)
@@ -203,6 +211,7 @@ class AppConfig:
     runtime: RuntimeConfig
     login_recovery: LoginRecoveryConfig
     town_teleport: TownTeleportConfig
+    death_recovery: DeathRecoveryConfig
 
 
 def load_config(path: Path) -> AppConfig:
@@ -327,10 +336,20 @@ def load_config(path: Path) -> AppConfig:
             consumables_template_path=str(teleport_raw.get("consumables_template_path", "assets/teleport/consumables.png")),
             waystone_template_path=str(teleport_raw.get("waystone_template_path", "assets/teleport/waystone.png")),
             waystone_confirm_template_path=str(teleport_raw.get("waystone_confirm_template_path", "assets/teleport/waystone_confirm.png")),
+            teleport_confirm_template_path=str(teleport_raw.get("teleport_confirm_template_path", "assets/teleport/teleport_confirm.png")),
             destination=TownTeleportDestinationConfig(
                 name=str(teleport_destination.get("name", "demon_mouth")),
                 template_path=str(teleport_destination.get("template_path", "assets/teleport/maps/demon_mouth.png")),
             ),
+        )
+        death_raw = raw.get("death_recovery", {})
+        death_threshold = float(death_raw.get("threshold", 0.82))
+        if not 0 <= death_threshold <= 1:
+            raise ValueError("death_recovery threshold must be between 0 and 1")
+        death_recovery = DeathRecoveryConfig(
+            enabled=bool(death_raw.get("enabled", False)),
+            threshold=death_threshold,
+            town_respawn_template_path=str(death_raw.get("town_respawn_template_path", "assets/death/town_respawn.png")),
         )
         return AppConfig(
             target_window_title=str(raw["target_window_title"]),
@@ -364,6 +383,7 @@ def load_config(path: Path) -> AppConfig:
             ),
             login_recovery=login_recovery,
             town_teleport=town_teleport,
+            death_recovery=death_recovery,
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError(f"設定檔格式錯誤：{error}") from error

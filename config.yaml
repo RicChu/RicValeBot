@@ -89,9 +89,16 @@ town_teleport:
   consumables_template_path: assets/teleport/consumables.png
   waystone_template_path: assets/teleport/waystone.png
   waystone_confirm_template_path: assets/teleport/waystone_confirm.png
+  teleport_confirm_template_path: assets/teleport/teleport_confirm.png
   destination:
     name: demon_mouth
     template_path: assets/teleport/maps/demon_mouth.png
+
+# 死亡視窗優先於登入、傳送、戰鬥與走路；只點一次後等待視窗消失。
+death_recovery:
+  enabled: true
+  threshold: 0.82
+  town_respawn_template_path: assets/death/town_respawn.png
 
 # 中心目標在全螢幕中心半徑內時，先立即按 2，再每 2 秒重複一次。
 center_target:
