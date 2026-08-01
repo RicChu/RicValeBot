@@ -169,6 +169,26 @@ class LoginRecoveryConfig:
 
 
 @dataclass(frozen=True)
+class TownTeleportDestinationConfig:
+    name: str
+    template_path: str
+
+
+@dataclass(frozen=True)
+class TownTeleportConfig:
+    enabled: bool
+    threshold: float
+    action_delay_ms: int
+    stage_timeout_ms: int
+    town_minimap_template_path: str
+    town_minimap_roi: tuple[int, int, int, int] | None
+    consumables_template_path: str
+    waystone_template_path: str
+    waystone_confirm_template_path: str
+    destination: TownTeleportDestinationConfig
+
+
+@dataclass(frozen=True)
 class AppConfig:
     target_window_title: str
     capture: CaptureConfig
@@ -182,6 +202,7 @@ class AppConfig:
     hsv_bar: HSVBarConfig
     runtime: RuntimeConfig
     login_recovery: LoginRecoveryConfig
+    town_teleport: TownTeleportConfig
 
 
 def load_config(path: Path) -> AppConfig:
@@ -286,6 +307,31 @@ def load_config(path: Path) -> AppConfig:
                 play_template_path=str(login_raw.get("character", {}).get("play_template_path", "assets/login/character/play.png")),
             ),
         )
+        teleport_raw = raw.get("town_teleport", {})
+        teleport_threshold = float(teleport_raw.get("threshold", 0.82))
+        teleport_delay_ms = int(teleport_raw.get("action_delay_ms", 700))
+        teleport_timeout_ms = int(teleport_raw.get("stage_timeout_ms", 8000))
+        if not 0 <= teleport_threshold <= 1 or teleport_delay_ms < 0 or teleport_timeout_ms <= 0:
+            raise ValueError("town_teleport settings are invalid")
+        teleport_destination = teleport_raw.get("destination", {})
+        teleport_roi_raw = teleport_raw.get("town_minimap_roi")
+        if teleport_roi_raw is not None and (len(teleport_roi_raw) != 4 or any(not isinstance(value, int) for value in teleport_roi_raw)):
+            raise ValueError("town_teleport.town_minimap_roi must be [left, top, width, height] or null")
+        town_teleport = TownTeleportConfig(
+            enabled=bool(teleport_raw.get("enabled", False)),
+            threshold=teleport_threshold,
+            action_delay_ms=teleport_delay_ms,
+            stage_timeout_ms=teleport_timeout_ms,
+            town_minimap_template_path=str(teleport_raw.get("town_minimap_template_path", "assets/teleport/city_minimap.png")),
+            town_minimap_roi=tuple(teleport_roi_raw) if teleport_roi_raw else None,
+            consumables_template_path=str(teleport_raw.get("consumables_template_path", "assets/teleport/consumables.png")),
+            waystone_template_path=str(teleport_raw.get("waystone_template_path", "assets/teleport/waystone.png")),
+            waystone_confirm_template_path=str(teleport_raw.get("waystone_confirm_template_path", "assets/teleport/waystone_confirm.png")),
+            destination=TownTeleportDestinationConfig(
+                name=str(teleport_destination.get("name", "demon_mouth")),
+                template_path=str(teleport_destination.get("template_path", "assets/teleport/maps/demon_mouth.png")),
+            ),
+        )
         return AppConfig(
             target_window_title=str(raw["target_window_title"]),
             capture=CaptureConfig(**raw["capture"]),
@@ -317,6 +363,7 @@ def load_config(path: Path) -> AppConfig:
                 debug_frame_path=str(runtime["debug_frame_path"]),
             ),
             login_recovery=login_recovery,
+            town_teleport=town_teleport,
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError(f"設定檔格式錯誤：{error}") from error

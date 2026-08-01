@@ -13,6 +13,7 @@ from screen_automation.combat import CombatController, CrowdSkillGroup
 from screen_automation.config import CenterROIConfig
 from screen_automation.detector import DetectionResult
 from screen_automation.login_recovery import LoginAction
+from screen_automation.town_teleport import TeleportAction
 from screen_automation.window import WindowInfo
 
 
@@ -56,6 +57,34 @@ def make_app(result: DetectionResult | None) -> AutomationApp:
 
 
 class AppLoggingTests(unittest.TestCase):
+    def test_teleport_key_action_pauses_existing_inputs_before_pressing_b(self) -> None:
+        app = make_app(None)
+        app.config.action.dry_run = False
+        movement_calls: list[tuple[int, tuple[str, ...]]] = []
+        clear_calls: list[bool] = []
+        app.movement_input = SimpleNamespace(set_movement=lambda hwnd, keys: movement_calls.append((hwnd, keys)), release=lambda *_: None)
+        app.skill_input = SimpleNamespace(clear=lambda: clear_calls.append(True))
+        window = WindowInfo(hwnd=7, title="Target", left=300, top=400, width=500, height=400)
+
+        with patch("screen_automation.app.post_key") as post_key:
+            app._handle_teleport_action(window, TeleportAction("key", "open_inventory", key="B"))
+
+        self.assertEqual(movement_calls, [(7, ())])
+        self.assertEqual(clear_calls, [True])
+        post_key.assert_called_once_with(7, "B", 0)
+
+    def test_teleport_double_click_uses_window_relative_position(self) -> None:
+        app = make_app(None)
+        app.config.action.dry_run = False
+        app.movement_input = SimpleNamespace(set_movement=lambda *_: None, release=lambda *_: None)
+        app.skill_input = SimpleNamespace(clear=lambda: None)
+        window = WindowInfo(hwnd=7, title="Target", left=300, top=400, width=500, height=400)
+
+        with patch("screen_automation.app.double_click_screen_position") as double_click:
+            app._handle_teleport_action(window, TeleportAction("double_click", "waystone", 100, 200))
+
+        double_click.assert_called_once_with((400, 600))
+
     def test_login_action_releases_movement_clears_skills_and_clicks(self) -> None:
         app = make_app(None)
         app.config.action.dry_run = False

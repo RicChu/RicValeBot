@@ -15,13 +15,15 @@ from .config import AppConfig
 from .detector import DetectionResult, MultiTemplateDetector
 from .hsv_bar import HSVBarDetector
 from .input_coordinator import MovementInput, SkillTapQueue
+from .keyboard import post_key
 from .login_recovery import LoginAction, LoginRecoveryController
 from .map_localization import MapLocalizer
 from .navigation import RouteNavigator, Waypoint, find_white_pair, minimap_bounds
-from .pointer import click_screen_position, image_hover_position, move_cursor_to_image
+from .pointer import click_screen_position, double_click_screen_position, image_hover_position, move_cursor_to_image
 from .roi import center_roi_bounds, translate_detection
 from .skill_queue import SkillScheduler
 from .timing import DetectionTimingMonitor
+from .town_teleport import TeleportAction, TownTeleportController
 from .walking import WalkingController
 from .window import WindowInfo, capture_print_window, find_window
 
@@ -113,6 +115,11 @@ class AutomationApp:
             if config.login_recovery.enabled
             else None
         )
+        self.town_teleport = (
+            TownTeleportController(config.town_teleport, base_dir=base_dir)
+            if config.town_teleport.enabled
+            else None
+        )
 
     def stop(self) -> None:
         if self.current_hwnd and not self.config.action.dry_run:
@@ -172,6 +179,25 @@ class AutomationApp:
         click_screen_position(position)
         logging.info("Login recovery action; stage=%s; action=%s; position=%s", action.stage, action.label, position)
 
+    def _handle_teleport_action(self, window: WindowInfo, action: TeleportAction) -> None:
+        self._pause_for_login(window)
+        if self.config.action.dry_run:
+            return
+        if action.kind == "key":
+            post_key(window.hwnd, action.key or "", 0)
+            logging.info("Town teleport action; action=%s; key=%s", action.label, action.key)
+            return
+        if action.x is None or action.y is None:
+            raise ValueError("Teleport click action requires a position")
+        position = (window.left + action.x, window.top + action.y)
+        if action.kind == "double_click":
+            double_click_screen_position(position)
+        elif action.kind == "click":
+            click_screen_position(position)
+        else:
+            raise ValueError(f"Unsupported teleport action: {action.kind}")
+        logging.info("Town teleport action; action=%s; position=%s", action.label, position)
+
     def _route_player_position(self, minimap: np.ndarray, marker_position: tuple[int, int] | None) -> tuple[int, int] | None:
         if marker_position is None:
             return None
@@ -206,6 +232,18 @@ class AutomationApp:
                 if login_recovery.active:
                     if login_action:
                         self._handle_login_action(window, login_action)
+                    else:
+                        self._pause_for_login(window)
+                    if once:
+                        return
+                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    continue
+            town_teleport = getattr(self, "town_teleport", None)
+            if town_teleport:
+                teleport_action = town_teleport.handle(frame, captured_at)
+                if town_teleport.active:
+                    if teleport_action:
+                        self._handle_teleport_action(window, teleport_action)
                     else:
                         self._pause_for_login(window)
                     if once:

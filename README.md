@@ -183,3 +183,25 @@ login_recovery:
 ```
 
 `name` 是方便辨識設定用途的標籤；實際畫面比對使用 `template_path` 的裁圖。更換伺服器或角色時，請擷取其名稱／按鈕圖片放入 `assets/login/`，再改掉相應路徑。尚未提供範本的斷線提示或錯誤視窗會被視為未知畫面，程式不會點擊。
+
+## 主城傳送石
+
+`town_teleport` 以右上角主城小地圖作為起點判斷。偵測到主城後會暫停走路、技能與 HSV，依序執行：`B` → 消耗品圖示 → 傳送石雙擊 → 傳送石確認 → 指定地圖縮圖。每一階段只有在下一個範本出現時才會前進；8 秒內未出現即停止，不會任意點擊。
+
+```yaml
+town_teleport:
+  enabled: true
+  threshold: 0.70
+  action_delay_ms: 700
+  stage_timeout_ms: 8000
+  town_minimap_template_path: assets/teleport/city_minimap.png
+  town_minimap_roi: [2200, 0, 360, 410]
+  consumables_template_path: assets/teleport/consumables.png
+  waystone_template_path: assets/teleport/waystone.png
+  waystone_confirm_template_path: assets/teleport/waystone_confirm.png
+  destination:
+    name: demon_mouth
+    template_path: assets/teleport/maps/demon_mouth.png
+```
+
+地圖縮圖都放在 `assets/teleport/maps/`。新增目的地時，放入新的裁圖、將 `destination.name` 改成識別名稱，並把 `template_path` 指向新檔案。`town_minimap_roi` 是目前 2560×1440 視窗的設定；若改變遊戲解析度，需重新裁小地圖並更新這個範圍。

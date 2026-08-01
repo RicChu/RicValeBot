@@ -77,6 +77,22 @@ login_recovery:
     template_path: assets/login/character/didi_killer.png
     play_template_path: assets/login/character/play.png
 
+# 主城時使用傳送石前往指定地圖。每一步都必須先識別到對應圖示才會操作。
+town_teleport:
+  enabled: true
+  threshold: 0.70
+  action_delay_ms: 700
+  stage_timeout_ms: 8000
+  town_minimap_template_path: assets/teleport/city_minimap.png
+  # 2560x1440 遊戲視窗的右上角小地圖範圍；限制搜尋以維持偵測效能。
+  town_minimap_roi: [2200, 0, 360, 410]
+  consumables_template_path: assets/teleport/consumables.png
+  waystone_template_path: assets/teleport/waystone.png
+  waystone_confirm_template_path: assets/teleport/waystone_confirm.png
+  destination:
+    name: demon_mouth
+    template_path: assets/teleport/maps/demon_mouth.png
+
 # 中心目標在全螢幕中心半徑內時，先立即按 2，再每 2 秒重複一次。
 center_target:
   enabled: true

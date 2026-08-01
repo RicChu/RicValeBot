@@ -125,6 +125,37 @@ login_recovery:
         self.assertEqual(config.login_recovery.character.name, "滴滴殺手")
         self.assertEqual(config.login_recovery.action_delay_ms, 700)
 
+    def test_reads_town_teleport_configuration(self) -> None:
+        content = """
+target_window_title: Target
+capture: {method: mss, fallback_to_desktop: true}
+detection: {template_paths: [], negative_template_paths: [], threshold: 0.5, roi: null}
+action: {key: '3', dry_run: true, key_hold_ms: 0, repeat_interval_ms: 20}
+pointer: {offset_y: -50}
+center_target: {template_paths: [], radius_px: 250, key: '2', key_hold_ms: 0, repeat_interval_ms: 500}
+runtime: {poll_interval_ms: 20, save_debug_frame: false, debug_frame_path: debug/latest_detection.png}
+town_teleport:
+  enabled: true
+  threshold: 0.82
+  action_delay_ms: 700
+  stage_timeout_ms: 8000
+  town_minimap_template_path: assets/teleport/city_minimap.png
+  town_minimap_roi: [2200, 0, 360, 410]
+  consumables_template_path: assets/teleport/consumables.png
+  waystone_template_path: assets/teleport/waystone.png
+  waystone_confirm_template_path: assets/teleport/waystone_confirm.png
+  destination: {name: demon_mouth, template_path: assets/teleport/maps/demon_mouth.png}
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.yaml"
+            path.write_text(content, encoding="utf-8")
+            config = load_config(path)
+
+        self.assertTrue(config.town_teleport.enabled)
+        self.assertEqual(config.town_teleport.destination.name, "demon_mouth")
+        self.assertEqual(config.town_teleport.stage_timeout_ms, 8000)
+        self.assertEqual(config.town_teleport.town_minimap_roi, (2200, 0, 360, 410))
+
 
 if __name__ == "__main__":
     unittest.main()
