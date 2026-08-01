@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import win32api
+import win32con
 
 from .detector import DetectionResult
 from .window import WindowInfo
@@ -21,4 +22,11 @@ def move_cursor_to_image(
 ) -> tuple[int, int]:
     position = image_hover_position(window, detection, offset_y)
     win32api.SetCursorPos(position)
+    return position
+
+
+def click_screen_position(position: tuple[int, int]) -> tuple[int, int]:
+    win32api.SetCursorPos(position)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
     return position

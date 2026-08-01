@@ -62,6 +62,21 @@ pointer:
   # 游標移到圖案中心後的垂直偏移量；-50 表示圖案上方 50 像素。
   offset_y: -50
 
+# 斷線後出現登入畫面時，先依序選伺服器／角色再進入遊戲。
+# 若換帳號或角色，請替換對應的名稱裁圖並調整 name 與 template_path。
+login_recovery:
+  enabled: true
+  threshold: 0.82
+  action_delay_ms: 700
+  server:
+    name: "SEA"
+    template_path: assets/login/server/sea.png
+    connect_template_path: assets/login/server/connect.png
+  character:
+    name: "滴滴殺手"
+    template_path: assets/login/character/didi_killer.png
+    play_template_path: assets/login/character/play.png
+
 # 中心目標在全螢幕中心半徑內時，先立即按 2，再每 2 秒重複一次。
 center_target:
   enabled: true

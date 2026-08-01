@@ -146,6 +146,29 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
+class LoginServerConfig:
+    name: str
+    template_path: str
+    connect_template_path: str
+
+
+@dataclass(frozen=True)
+class LoginCharacterConfig:
+    name: str
+    template_path: str
+    play_template_path: str
+
+
+@dataclass(frozen=True)
+class LoginRecoveryConfig:
+    enabled: bool
+    threshold: float
+    action_delay_ms: int
+    server: LoginServerConfig
+    character: LoginCharacterConfig
+
+
+@dataclass(frozen=True)
 class AppConfig:
     target_window_title: str
     capture: CaptureConfig
@@ -158,6 +181,7 @@ class AppConfig:
     skill_queue: SkillQueueConfig
     hsv_bar: HSVBarConfig
     runtime: RuntimeConfig
+    login_recovery: LoginRecoveryConfig
 
 
 def load_config(path: Path) -> AppConfig:
@@ -242,6 +266,26 @@ def load_config(path: Path) -> AppConfig:
             or not 0 <= black_residual.low_colour_trigger_ratio <= 1
         ):
             raise ValueError("hsv_bar.black_residual settings are invalid")
+        login_raw = raw.get("login_recovery", {})
+        login_threshold = float(login_raw.get("threshold", 0.82))
+        login_delay_ms = int(login_raw.get("action_delay_ms", 700))
+        if not 0 <= login_threshold <= 1 or login_delay_ms < 0:
+            raise ValueError("login_recovery settings are invalid")
+        login_recovery = LoginRecoveryConfig(
+            enabled=bool(login_raw.get("enabled", False)),
+            threshold=login_threshold,
+            action_delay_ms=login_delay_ms,
+            server=LoginServerConfig(
+                name=str(login_raw.get("server", {}).get("name", "SEA")),
+                template_path=str(login_raw.get("server", {}).get("template_path", "assets/login/server/sea.png")),
+                connect_template_path=str(login_raw.get("server", {}).get("connect_template_path", "assets/login/server/connect.png")),
+            ),
+            character=LoginCharacterConfig(
+                name=str(login_raw.get("character", {}).get("name", "滴滴殺手")),
+                template_path=str(login_raw.get("character", {}).get("template_path", "assets/login/character/didi_killer.png")),
+                play_template_path=str(login_raw.get("character", {}).get("play_template_path", "assets/login/character/play.png")),
+            ),
+        )
         return AppConfig(
             target_window_title=str(raw["target_window_title"]),
             capture=CaptureConfig(**raw["capture"]),
@@ -272,6 +316,7 @@ def load_config(path: Path) -> AppConfig:
                 save_debug_frame=bool(runtime["save_debug_frame"]),
                 debug_frame_path=str(runtime["debug_frame_path"]),
             ),
+            login_recovery=login_recovery,
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError(f"設定檔格式錯誤：{error}") from error

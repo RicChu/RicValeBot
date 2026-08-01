@@ -159,3 +159,27 @@ git add .
 git commit -m "描述這次修改"
 git push origin main
 ```
+
+## 斷線登入回復
+
+`login_recovery` 只會在辨識到「連接」或「遊玩角色」按鈕時啟用，因此正常遊戲畫面不會被點擊。登入階段啟用後，程式會先釋放 WASD、清空尚未施放的技能，再依序完成一次選擇與一次確認：
+
+1. 選取 `server.name` 對應的伺服器，再按「連接」。
+2. 選取 `character.name` 對應的角色，再按「遊玩角色」。
+
+```yaml
+login_recovery:
+  enabled: true
+  threshold: 0.82
+  action_delay_ms: 700
+  server:
+    name: "SEA"
+    template_path: assets/login/server/sea.png
+    connect_template_path: assets/login/server/connect.png
+  character:
+    name: "滴滴殺手"
+    template_path: assets/login/character/didi_killer.png
+    play_template_path: assets/login/character/play.png
+```
+
+`name` 是方便辨識設定用途的標籤；實際畫面比對使用 `template_path` 的裁圖。更換伺服器或角色時，請擷取其名稱／按鈕圖片放入 `assets/login/`，再改掉相應路徑。尚未提供範本的斷線提示或錯誤視窗會被視為未知畫面，程式不會點擊。

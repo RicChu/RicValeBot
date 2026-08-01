@@ -93,6 +93,38 @@ runtime: {poll_interval_ms: 20, detection_timing_log_interval_ms: 5000, save_deb
         self.assertEqual(config.crowd_combat.keys, ("F2", "F3", "F4"))
         self.assertEqual(config.crowd_combat.min_targets, 3)
 
+    def test_reads_login_recovery_configuration(self) -> None:
+        content = """
+target_window_title: Target
+capture: {method: mss, fallback_to_desktop: true}
+detection: {template_paths: [], negative_template_paths: [], threshold: 0.5, roi: null}
+action: {key: '3', dry_run: true, key_hold_ms: 0, repeat_interval_ms: 20}
+pointer: {offset_y: -50}
+center_target: {template_paths: [], radius_px: 250, key: '2', key_hold_ms: 0, repeat_interval_ms: 500}
+runtime: {poll_interval_ms: 20, save_debug_frame: false, debug_frame_path: debug/latest_detection.png}
+login_recovery:
+  enabled: true
+  threshold: 0.82
+  action_delay_ms: 700
+  server:
+    name: SEA
+    template_path: assets/login/server/sea.png
+    connect_template_path: assets/login/server/connect.png
+  character:
+    name: 滴滴殺手
+    template_path: assets/login/character/didi_killer.png
+    play_template_path: assets/login/character/play.png
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.yaml"
+            path.write_text(content, encoding="utf-8")
+            config = load_config(path)
+
+        self.assertTrue(config.login_recovery.enabled)
+        self.assertEqual(config.login_recovery.server.name, "SEA")
+        self.assertEqual(config.login_recovery.character.name, "滴滴殺手")
+        self.assertEqual(config.login_recovery.action_delay_ms, 700)
+
 
 if __name__ == "__main__":
     unittest.main()

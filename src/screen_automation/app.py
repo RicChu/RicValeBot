@@ -15,9 +15,10 @@ from .config import AppConfig
 from .detector import DetectionResult, MultiTemplateDetector
 from .hsv_bar import HSVBarDetector
 from .input_coordinator import MovementInput, SkillTapQueue
+from .login_recovery import LoginAction, LoginRecoveryController
 from .map_localization import MapLocalizer
 from .navigation import RouteNavigator, Waypoint, find_white_pair, minimap_bounds
-from .pointer import image_hover_position, move_cursor_to_image
+from .pointer import click_screen_position, image_hover_position, move_cursor_to_image
 from .roi import center_roi_bounds, translate_detection
 from .skill_queue import SkillScheduler
 from .timing import DetectionTimingMonitor
@@ -107,6 +108,11 @@ class AutomationApp:
             config.runtime.poll_interval_ms,
             config.runtime.detection_timing_log_interval_ms,
         )
+        self.login_recovery = (
+            LoginRecoveryController(config.login_recovery, base_dir=base_dir)
+            if config.login_recovery.enabled
+            else None
+        )
 
     def stop(self) -> None:
         if self.current_hwnd and not self.config.action.dry_run:
@@ -153,6 +159,19 @@ class AutomationApp:
                 self.was_task_action_logged = True
         self.last_action_at = now
 
+    def _pause_for_login(self, window: WindowInfo) -> None:
+        self.skill_input.clear()
+        if not self.config.action.dry_run:
+            self.movement_input.set_movement(window.hwnd, ())
+
+    def _handle_login_action(self, window: WindowInfo, action: LoginAction) -> None:
+        self._pause_for_login(window)
+        if self.config.action.dry_run:
+            return
+        position = (window.left + action.x, window.top + action.y)
+        click_screen_position(position)
+        logging.info("Login recovery action; stage=%s; action=%s; position=%s", action.stage, action.label, position)
+
     def _route_player_position(self, minimap: np.ndarray, marker_position: tuple[int, int] | None) -> tuple[int, int] | None:
         if marker_position is None:
             return None
@@ -181,6 +200,18 @@ class AutomationApp:
             self.current_hwnd = window.hwnd
             frame = self.capture(window)
             captured_at = time.monotonic()
+            login_recovery = getattr(self, "login_recovery", None)
+            if login_recovery:
+                login_action = login_recovery.handle(frame, captured_at)
+                if login_recovery.active:
+                    if login_action:
+                        self._handle_login_action(window, login_action)
+                    else:
+                        self._pause_for_login(window)
+                    if once:
+                        return
+                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    continue
             targets = self._detect_targets(frame)
             detected_at = time.monotonic()
             now = detected_at

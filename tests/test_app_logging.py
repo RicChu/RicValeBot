@@ -12,6 +12,7 @@ from screen_automation.app import AutomationApp
 from screen_automation.combat import CombatController, CrowdSkillGroup
 from screen_automation.config import CenterROIConfig
 from screen_automation.detector import DetectionResult
+from screen_automation.login_recovery import LoginAction
 from screen_automation.window import WindowInfo
 
 
@@ -55,6 +56,25 @@ def make_app(result: DetectionResult | None) -> AutomationApp:
 
 
 class AppLoggingTests(unittest.TestCase):
+    def test_login_action_releases_movement_clears_skills_and_clicks(self) -> None:
+        app = make_app(None)
+        app.config.action.dry_run = False
+        movement_calls: list[tuple[int, tuple[str, ...]]] = []
+        clear_calls: list[bool] = []
+        app.movement_input = SimpleNamespace(
+            set_movement=lambda hwnd, keys: movement_calls.append((hwnd, keys)),
+            release=lambda *_: None,
+        )
+        app.skill_input = SimpleNamespace(clear=lambda: clear_calls.append(True))
+        window = WindowInfo(hwnd=7, title="Target", left=300, top=400, width=500, height=400)
+
+        with patch("screen_automation.app.click_screen_position") as click:
+            app._handle_login_action(window, LoginAction("server", "connect", 100, 200))
+
+        self.assertEqual(movement_calls, [(7, ())])
+        self.assertEqual(clear_calls, [True])
+        click.assert_called_once_with((400, 600))
+
     def test_does_not_log_when_image_is_not_detected(self) -> None:
         app = make_app(None)
         window = WindowInfo(hwnd=1, title="Target", left=100, top=200, width=500, height=400)
