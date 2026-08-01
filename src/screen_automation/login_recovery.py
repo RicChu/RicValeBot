@@ -45,6 +45,11 @@ class LoginRecoveryController:
     def active(self) -> bool:
         return self._active_stage is not None
 
+    def reset(self) -> None:
+        self._active_stage = None
+        self._phase = "select"
+        self._last_click_at = float("-inf")
+
     def _make_detector(self, path: str) -> Detector:
         if self._factory is not None:
             return self._factory(path, self.config.threshold)

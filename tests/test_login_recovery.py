@@ -89,6 +89,20 @@ class LoginRecoveryControllerTests(unittest.TestCase):
 
         self.assertIsNone(controller.handle(self.frame, now=0.49))
 
+    def test_reset_clears_an_active_login_stage(self) -> None:
+        matches = {
+            "connect.png": DetectionResult(0.95, 70, 80, 20, 10),
+            "server.png": DetectionResult(0.91, 10, 20, 30, 10),
+            "play.png": None,
+            "character.png": None,
+        }
+        controller = LoginRecoveryController(recovery_config(), lambda path, _threshold: FakeDetector(matches[path]))
+
+        controller.handle(self.frame, now=0.0)
+        controller.reset()
+
+        self.assertFalse(controller.active)
+
 
 if __name__ == "__main__":
     unittest.main()
