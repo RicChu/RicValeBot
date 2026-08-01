@@ -1,0 +1,123 @@
+# 目標視窗的標題片段；程式會選擇第一個符合的可見視窗。
+target_window_title: "SpiritVale"
+
+capture:
+  # printwindow 可嘗試截取未在前景的視窗。
+  method: mss
+  # PrintWindow 失敗時，是否改抓桌面上同位置的區域。
+  fallback_to_desktop: true
+
+detection:
+  # 任一範本辨識成功都會觸發相同的任務 1（按 3）。
+  template_paths:
+    []
+  # 反例出現時不觸發任務 1，即使正例同時被辨識到。
+  negative_template_paths: []
+  # 介於 0 到 1；越高越嚴格。
+  threshold: 0.85
+  # 只在指定區域尋找，可縮短處理時間。null 表示整個視窗。
+  # roi: [left, top, width, height]
+  roi: null
+  # 任務 1 的 HSV 與範本只在視窗中心附近搜尋，降低四周相似物件的誤判。
+  center_roi:
+    enabled: true
+    width: 1000
+    height: 800
+    offset_y: 50
+
+hsv_bar:
+  enabled: true
+  min_width: 60
+  max_width: 160
+  min_height: 8
+  max_height: 35
+  # 實際目標黑框約為 91 x 25 px（長寬比 3.6），保留些許縮放餘裕。
+  min_aspect_ratio: 3.0
+  max_aspect_ratio: 12.0
+  max_white_ratio: 0.80
+  min_horizontal_run_ratio: 0.50
+  min_allowed_colour_ratio: 0.60
+  edge_band_px: 2
+  edge_black_ratio: 0.50
+  inner_band_enabled: true
+  black_residual_enabled: true
+  black_residual:
+    min_extent: 0.75
+    dedup_iou: 0.30
+    outer_ring_px: 3
+    min_outer_contrast: 8.0
+    low_colour_trigger_ratio: 0.40
+
+action:
+  # 常用值：SPACE、ENTER、ESC、LEFT、RIGHT、UP、DOWN、A-Z、0-9。
+  key: "3"
+  # 先以乾跑模式驗證，不會發送按鍵。
+  dry_run: false
+  # 模擬 AutoHotkey 的 Send("3")：立即放開，再由重複週期決定下一次按鍵。
+  key_hold_ms: 0
+  # 圖案持續存在時，每隔多久再送出一次按鍵。
+  repeat_interval_ms: 20
+
+pointer:
+  # 游標移到圖案中心後的垂直偏移量；-50 表示圖案上方 50 像素。
+  offset_y: -50
+
+# 中心目標在全螢幕中心半徑內時，先立即按 2，再每 2 秒重複一次。
+center_target:
+  enabled: true
+  template_paths:
+    - assets/center_target
+  radius_px: 350
+  key: "2"
+  key_hold_ms: 0
+  repeat_interval_ms: 500
+
+crowd_combat:
+  enabled: true
+  keys: ["F2", "F3", "F4"]
+  min_targets: 2
+  skill_cooldown_ms: 6000
+  skill_interval_ms: 330
+
+walking:
+  enabled: true
+  # random：保留原本區域內亂走；route：依右上小地圖路徑點走動。
+  mode: random
+  step_distance: 100
+  speed_px_per_sec: 100
+  boundary_x: 600
+  boundary_y: 400
+  route:
+    # 以遊戲視窗右上角為基準；不同解析度仍會自動靠右。
+    minimap: {right_px: 20, top_px: 20, width_px: 340, height_px: 360}
+    white_threshold: 220
+    pair_max_distance_px: 18
+    arrival_radius_px: 12
+    movement_deadzone_px: 4
+    map_recording:
+      enabled: false
+      manifest_path: maps/latest/manifest.yaml
+      min_match_count: 8
+      max_position_jump_px: 80
+    # 依你標示的 A、B、C 初始位置；導航會選最近點但不立即回上一站。
+    waypoints:
+      - {name: A, x: 180, y: 150}
+      - {name: B, x: 220, y: 180}
+      - {name: C, x: 185, y: 210}
+
+skill_queue:
+  enabled: true
+  queue_interval_ms: 330
+  schedules:
+    - {key: "6", interval_seconds: 45}
+    - {key: "5", interval_seconds: 20}
+    - {key: "6", interval_seconds: 20}
+    - {key: "V", interval_seconds: 0.5}
+
+runtime:
+  # 與任務 1 的獨立冷卻同步，每 20 ms 重新確認圖案是否仍存在。
+  poll_interval_ms: 20
+  detection_timing_log_interval_ms: 5000
+  log_mode: off
+  save_debug_frame: false
+  debug_frame_path: debug/latest_detection.png
