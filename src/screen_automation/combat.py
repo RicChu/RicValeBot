@@ -53,28 +53,52 @@ def directions_toward_target(target: DetectionResult, frame_width: int, frame_he
     return tuple(directions)
 
 
+class PrioritySkillGroup:
+    """Selects one ready skill in configured priority order."""
+
+    def __init__(self, skills: tuple[tuple[str, float], ...], interval_seconds: float) -> None:
+        if not skills or interval_seconds <= 0:
+            raise ValueError("skill group requires skills and a positive interval")
+        if any(not key or cooldown_seconds <= 0 for key, cooldown_seconds in skills):
+            raise ValueError("skill group entries require a key and positive cooldown")
+        self.skills = skills
+        self.interval_seconds = interval_seconds
+        self._last_group_cast = float("-inf")
+        self._last_skill_cast = {key: float("-inf") for key, _ in skills}
+
+    def next_skill(self, now: float) -> str | None:
+        if now - self._last_group_cast < self.interval_seconds - 1e-9:
+            return None
+        for key, cooldown_seconds in self.skills:
+            if now - self._last_skill_cast[key] >= cooldown_seconds - 1e-9:
+                self._last_group_cast = now
+                self._last_skill_cast[key] = now
+                return key
+        return None
+
+
 class CrowdSkillGroup:
     def __init__(
-        self, keys: tuple[str, ...], min_targets: int, skill_cooldown_seconds: float, spacing_seconds: float
+        self,
+        keys: tuple[str, ...],
+        min_targets: int,
+        skill_cooldown_seconds: float,
+        spacing_seconds: float,
+        skills: tuple[tuple[str, float], ...] | None = None,
     ) -> None:
         if not keys:
             raise ValueError("crowd skill group requires at least one key")
-        self.keys = keys
+        selected_skills = skills or tuple((key, skill_cooldown_seconds) for key in keys)
+        self.keys = tuple(key for key, _ in selected_skills)
         self.min_targets = min_targets
-        self.skill_cooldown_seconds = skill_cooldown_seconds
-        self.spacing_seconds = spacing_seconds
-        self._last_group_cast = float("-inf")
-        self._last_skill_cast = {key: float("-inf") for key in keys}
+        if skill_cooldown_seconds <= 0:
+            raise ValueError("crowd skill cooldown and spacing must be positive")
+        self.skill_group = PrioritySkillGroup(selected_skills, spacing_seconds)
 
     def next_skill(self, now: float, target_count: int) -> str | None:
-        if target_count < self.min_targets or now - self._last_group_cast < self.spacing_seconds - 1e-9:
+        if target_count < self.min_targets:
             return None
-        for key in self.keys:
-            if now - self._last_skill_cast[key] >= self.skill_cooldown_seconds - 1e-9:
-                self._last_skill_cast[key] = now
-                self._last_group_cast = now
-                return key
-        return None
+        return self.skill_group.next_skill(now)
 
 
 class CombatController:

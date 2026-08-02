@@ -13,17 +13,6 @@ def target_screen_position(window: WindowInfo, detection: DetectionResult) -> tu
     )
 
 
-def is_inside_screen_center_radius(
-    window: WindowInfo,
-    detection: DetectionResult,
-    screen_width: int,
-    screen_height: int,
-    radius_px: int,
-) -> bool:
-    target_x, target_y = target_screen_position(window, detection)
-    return hypot(target_x - screen_width / 2, target_y - screen_height / 2) <= radius_px
-
-
 def is_inside_window_center_radius(window: WindowInfo, detection: DetectionResult, radius_px: int) -> bool:
     """Use the game window's visible center, independent of monitor placement."""
     target_x, target_y = target_screen_position(window, detection)
