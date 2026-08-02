@@ -29,6 +29,7 @@ def teleport_config() -> SimpleNamespace:
         consumables_template_path="consumables.png",
         waystone_template_path="waystone.png",
         waystone_confirm_template_path="confirm.png",
+        waystone_confirm_template_paths=("confirm.png", "confirm2.png"),
         teleport_confirm_template_path="teleport.png",
         destination=SimpleNamespace(name="demon_mouth", template_path="demon_mouth.png"),
     )
@@ -42,6 +43,7 @@ class TownTeleportControllerTests(unittest.TestCase):
             "consumables.png": DetectionResult(0.95, 10, 20, 20, 20),
             "waystone.png": DetectionResult(0.95, 30, 40, 20, 20),
             "confirm.png": DetectionResult(0.95, 40, 50, 20, 20),
+            "confirm2.png": DetectionResult(0.95, 42, 52, 20, 20),
             "demon_mouth.png": DetectionResult(0.95, 50, 60, 20, 20),
             "teleport.png": DetectionResult(0.95, 60, 70, 20, 20),
         }
@@ -64,6 +66,11 @@ class TownTeleportControllerTests(unittest.TestCase):
         self.assertIsNone(controller.handle(self.frame, 0))
         self.assertFalse(controller.active)
 
+    def test_reports_when_the_town_minimap_is_visible(self) -> None:
+        controller = TownTeleportController(teleport_config(), lambda path, _threshold: FakeDetector(self.matches[path]))
+
+        self.assertTrue(controller.is_town(self.frame))
+
     def test_missing_next_stage_times_out_without_clicking(self) -> None:
         matches = dict(self.matches)
         matches["consumables.png"] = None
@@ -72,6 +79,26 @@ class TownTeleportControllerTests(unittest.TestCase):
         self.assertEqual(controller.handle(self.frame, 0).key, "B")
         self.assertIsNone(controller.handle(self.frame, 8.1))
         self.assertFalse(controller.active)
+
+    def test_second_waystone_confirmation_image_advances_the_sequence(self) -> None:
+        matches = dict(self.matches)
+        matches["confirm.png"] = None
+        controller = TownTeleportController(teleport_config(), lambda path, _threshold: FakeDetector(matches[path]))
+
+        [controller.handle(self.frame, now) for now in range(3)]
+        action = controller.handle(self.frame, 3)
+
+        self.assertEqual((action.label, action.x, action.y), ("waystone_confirm", 52, 62))
+
+    def test_departure_event_is_emitted_once_when_town_minimap_disappears(self) -> None:
+        matches = dict(self.matches)
+        controller = TownTeleportController(teleport_config(), lambda path, _threshold: FakeDetector(matches[path]))
+
+        [controller.handle(self.frame, now) for now in range(6)]
+        controller.town_minimap = FakeDetector(None)
+        self.assertIsNone(controller.handle(self.frame, 6))
+        self.assertTrue(controller.consume_departure())
+        self.assertFalse(controller.consume_departure())
 
 
 if __name__ == "__main__":

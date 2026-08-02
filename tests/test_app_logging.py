@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,12 +9,13 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
-from screen_automation.app import AutomationApp
-from screen_automation.combat import CombatController, CrowdSkillGroup
-from screen_automation.config import CenterROIConfig
+from screen_automation.app import AutomationApp, existing_template_paths
+from screen_automation.combat import CombatController, CrowdSkillGroup, PrioritySkillGroup
+from screen_automation.config import CenterROIConfig, SkillConfig
 from screen_automation.detector import DetectionResult
 from screen_automation.death_recovery import DeathAction
 from screen_automation.login_recovery import LoginAction
+from screen_automation.map_arrival_wait import MapArrivalWaitController
 from screen_automation.town_teleport import TeleportAction
 from screen_automation.window import WindowInfo
 
@@ -29,11 +31,15 @@ def make_app(result: DetectionResult | None) -> AutomationApp:
         center_target=SimpleNamespace(enabled=False, radius_px=250, key="2", repeat_interval_ms=500),
         crowd_combat=SimpleNamespace(enabled=True, keys=("F2", "F3", "F4"), min_targets=3, skill_cooldown_ms=6000, skill_interval_ms=330, movement_resume_delay_ms=1000),
         walking=SimpleNamespace(speed_px_per_sec=400),
+        active_map=SimpleNamespace(name="the_forge"),
     )
     app.detector = SimpleNamespace(detect=lambda _: result)
+    app.map_target_detector = None
     app.negative_detector = SimpleNamespace(detect=lambda _: None)
     app.last_action_at = float("-inf")
     app.last_center_action_at = float("-inf")
+    app.task_one_skill_group = PrioritySkillGroup((("3", 0.02),), 0.02)
+    app.center_skill_group = PrioritySkillGroup((("2", 0.5),), 0.5)
     app.was_detected = False
     app.was_task_action_logged = False
     app.was_center_detected = False
@@ -58,12 +64,115 @@ def make_app(result: DetectionResult | None) -> AutomationApp:
 
 
 class AppLoggingTests(unittest.TestCase):
+    def test_ignores_missing_map_target_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            present = root / "targets"
+            present.mkdir()
+
+            result = existing_template_paths(root, ("targets", "missing"))
+
+        self.assertEqual(result, (present,))
+
+    def test_center_target_uses_next_ready_skill_from_its_group(self) -> None:
+        app = make_app(None)
+        app.config.action.dry_run = False
+        app.config.center_target.skills = (SkillConfig("2", 1000), SkillConfig("3", 2000))
+        app.config.center_target.skill_interval_ms = 330
+        app.center_skill_group = PrioritySkillGroup((("2", 1.0), ("3", 2.0)), 0.33)
+        queued: list[str] = []
+        app.skill_input = SimpleNamespace(queue_tap=lambda key, **_: queued.append(key))
+
+        app._handle_center_target(0.0, (500, 300))
+        app._handle_center_target(0.33, (500, 300))
+        app._handle_center_target(1.0, (500, 300))
+
+        self.assertEqual(queued, ["2", "3", "2"])
+
+    def test_teleport_departure_waits_for_arrival_minimap_before_scripted_route(self) -> None:
+        app = make_app(None)
+        route_start_calls: list[float] = []
+        wait_start_calls: list[bool] = []
+        app.scripted_route = SimpleNamespace(start=lambda now: route_start_calls.append(now), active=False)
+        app.map_arrival_wait = SimpleNamespace(start=lambda: wait_start_calls.append(True), active=False)
+
+        app._handle_teleport_departure(12.5)
+
+        self.assertEqual(route_start_calls, [])
+        self.assertEqual(wait_start_calls, [True])
+
+    def test_arrival_minimap_detection_starts_the_scripted_route(self) -> None:
+        app = make_app(None)
+        route_start_calls: list[float] = []
+        app.scripted_route = SimpleNamespace(start=lambda now: route_start_calls.append(now), active=False)
+        app.map_arrival_wait = MapArrivalWaitController()
+        arrival = DetectionResult(score=0.99, left=5, top=5, width=10, height=10)
+        results = iter((None, arrival))
+        app.map_arrival_detector = SimpleNamespace(detect=lambda _: next(results))
+        window = WindowInfo(hwnd=7, title="Target", left=0, top=0, width=100, height=100)
+
+        app._handle_teleport_departure(12.5)
+
+        self.assertTrue(app._run_map_arrival_wait(window, np.zeros((100, 100, 3), dtype=np.uint8), 12.6))
+        self.assertEqual(route_start_calls, [])
+        self.assertFalse(app._run_map_arrival_wait(window, np.zeros((100, 100, 3), dtype=np.uint8), 13.0))
+        self.assertEqual(route_start_calls, [13.0])
+
+    def test_arrival_minimap_waits_for_configured_delay_before_starting_route(self) -> None:
+        app = make_app(None)
+        route_start_calls: list[float] = []
+        app.config.active_map.route_start_delay_ms = 1000
+        app.scripted_route = SimpleNamespace(start=lambda now: route_start_calls.append(now), active=False)
+        app.map_arrival_wait = MapArrivalWaitController()
+        arrival = DetectionResult(score=0.99, left=5, top=5, width=10, height=10)
+        app.map_arrival_detector = SimpleNamespace(detect=lambda _: arrival)
+        window = WindowInfo(hwnd=7, title="Target", left=0, top=0, width=100, height=100)
+
+        app._handle_teleport_departure(12.5)
+
+        self.assertTrue(app._run_map_arrival_wait(window, np.zeros((100, 100, 3), dtype=np.uint8), 13.0))
+        self.assertEqual(route_start_calls, [])
+        self.assertFalse(app._run_map_arrival_wait(window, np.zeros((100, 100, 3), dtype=np.uint8), 14.0))
+        self.assertEqual(route_start_calls, [14.0])
+
+    def test_teleport_departure_starts_scripted_route_without_minimap_zoom(self) -> None:
+        app = make_app(None)
+        calls: list[float] = []
+        app.scripted_route = SimpleNamespace(start=lambda now: calls.append(now), active=False)
+        app.minimap_zoom = SimpleNamespace(enabled=True, start_combat=lambda _: self.fail("scripted route must not start minimap zoom"))
+
+        app._handle_teleport_departure(12.5)
+
+        self.assertEqual(calls, [12.5])
+
+    def test_hsv_targets_take_priority_over_active_map_template(self) -> None:
+        app = make_app(None)
+        hsv_target = DetectionResult(score=0.90, left=20, top=30, width=80, height=10)
+        template_target = DetectionResult(score=0.95, left=40, top=50, width=30, height=30)
+        app.hsv_detector = SimpleNamespace(detect_all=lambda _: (hsv_target,))
+        app.map_target_detector = SimpleNamespace(detect=lambda _: template_target)
+
+        targets = app._detect_targets(np.zeros((100, 100, 3), dtype=np.uint8))
+
+        self.assertEqual(targets, (hsv_target,))
+
+    def test_uses_active_map_template_when_hsv_has_no_target(self) -> None:
+        app = make_app(None)
+        template_target = DetectionResult(score=0.95, left=40, top=50, width=30, height=30)
+        app.hsv_detector = SimpleNamespace(detect_all=lambda _: ())
+        app.map_target_detector = SimpleNamespace(detect=lambda _: template_target)
+
+        targets = app._detect_targets(np.zeros((100, 100, 3), dtype=np.uint8))
+
+        self.assertEqual(targets, (template_target,))
+
     def test_death_action_cancels_login_and_teleport_before_clicking_respawn(self) -> None:
         app = make_app(None)
         app.config.action.dry_run = False
         resets: list[str] = []
         app.login_recovery = SimpleNamespace(reset=lambda: resets.append("login"))
         app.town_teleport = SimpleNamespace(reset=lambda: resets.append("teleport"))
+        app.minimap_zoom = SimpleNamespace(cancel=lambda: resets.append("zoom"))
         app.movement_input = SimpleNamespace(set_movement=lambda *_: None, release=lambda *_: None)
         app.skill_input = SimpleNamespace(clear=lambda: resets.append("skills"))
         window = WindowInfo(hwnd=7, title="Target", left=300, top=400, width=500, height=400)
@@ -71,7 +180,7 @@ class AppLoggingTests(unittest.TestCase):
         with patch("screen_automation.app.click_screen_position") as click:
             app._handle_death_action(window, DeathAction("town_respawn", 100, 200))
 
-        self.assertEqual(resets, ["login", "teleport", "skills"])
+        self.assertEqual(resets, ["login", "teleport", "zoom", "skills"])
         click.assert_called_once_with((400, 600))
 
     def test_teleport_key_action_pauses_existing_inputs_before_pressing_b(self) -> None:
@@ -264,6 +373,31 @@ class AppLoggingTests(unittest.TestCase):
             app.run(once=True)
 
         self.assertEqual(movements, [("A",)])
+        self.assertIn("F2", skills)
+
+    def test_crowd_avoidance_can_be_disabled_without_disabling_crowd_skills(self) -> None:
+        app = make_app(None)
+        app.config.action.dry_run = False
+        app.config.crowd_combat.avoid_movement_enabled = False
+        app.detector = None
+        excluded: list[tuple[str, ...]] = []
+        app.walker = SimpleNamespace(next_step=lambda excluded_keys=(): (excluded.append(excluded_keys) or (("A",), 10)))
+        app.hsv_detector = SimpleNamespace(
+            detect_all=lambda _: (
+                DetectionResult(score=0.8, left=5, top=5, width=80, height=15),
+                DetectionResult(score=0.8, left=35, top=35, width=80, height=15),
+                DetectionResult(score=0.8, left=70, top=70, width=80, height=15),
+            )
+        )
+        skills: list[str] = []
+        app.movement_input = SimpleNamespace(set_movement=lambda *_: None, release=lambda *_: None)
+        app.skill_input = SimpleNamespace(queue_tap=lambda key, **_: skills.append(key), process=lambda *_: None, clear=lambda: None)
+        window = WindowInfo(hwnd=1, title="Target", left=0, top=0, width=100, height=100)
+
+        with patch("screen_automation.app.find_window", return_value=window), patch("screen_automation.app.move_cursor_to_image"):
+            app.run(once=True)
+
+        self.assertEqual(excluded, [()])
         self.assertIn("F2", skills)
 
 

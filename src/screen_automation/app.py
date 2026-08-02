@@ -10,23 +10,38 @@ import numpy as np
 import win32api
 
 from .center_target import is_inside_window_center_radius
-from .combat import CombatController, CrowdSkillGroup, directions_toward_target, select_nearest_to_center, steer_away_from_target
+from .combat import CombatController, CrowdSkillGroup, PrioritySkillGroup, directions_toward_target, select_nearest_to_center, steer_away_from_target
+from .combat_state import CombatStateController
 from .config import AppConfig
 from .death_recovery import DeathAction, DeathRecoveryController
 from .detector import DetectionResult, MultiTemplateDetector
+from .disconnect_recovery import DisconnectAction, DisconnectRecoveryController
 from .hsv_bar import HSVBarDetector
 from .input_coordinator import MovementInput, SkillTapQueue
 from .keyboard import post_key
 from .login_recovery import LoginAction, LoginRecoveryController
+from .map_arrival_wait import MapArrivalWaitController
 from .map_localization import MapLocalizer
+from .minimap_zoom import MinimapZoomController
 from .navigation import RouteNavigator, Waypoint, find_white_pair, minimap_bounds
-from .pointer import click_screen_position, double_click_screen_position, image_hover_position, move_cursor_to_image
+from .pointer import click_screen_position, ctrl_wheel_at, double_click_screen_position, image_hover_position, move_cursor_to_image
 from .roi import center_roi_bounds, translate_detection
+from .scripted_route import ScriptedRouteController, load_movement_script
 from .skill_queue import SkillScheduler
 from .timing import DetectionTimingMonitor
 from .town_teleport import TeleportAction, TownTeleportController
 from .walking import WalkingController
 from .window import WindowInfo, capture_print_window, find_window
+
+
+def existing_template_paths(base_dir: Path, paths: tuple[str, ...]) -> tuple[Path, ...]:
+    """Return only configured template paths that are currently available.
+
+    A map profile may use its default ``targets/`` directory before target
+    screenshots have been collected.  That must disable only template fallback,
+    not prevent HSV detection or the rest of the automation from starting.
+    """
+    return tuple(path for relative_path in paths if (path := base_dir / relative_path).exists())
 
 
 class AutomationApp:
@@ -40,6 +55,16 @@ class AutomationApp:
         self.negative_detector = (
             MultiTemplateDetector(tuple(base_dir / path for path in config.detection.negative_template_paths), config.detection.threshold, config.detection.roi)
             if config.detection.negative_template_paths else None
+        )
+        map_target_paths = existing_template_paths(base_dir, config.active_map.target_template_paths)
+        self.map_target_detector = (
+            MultiTemplateDetector(
+                map_target_paths,
+                config.detection.threshold,
+                config.detection.roi,
+            )
+            if map_target_paths
+            else None
         )
         self.hsv_detector = (
             HSVBarDetector(
@@ -70,7 +95,15 @@ class AutomationApp:
         self.was_detected = False
         self.was_task_action_logged = False
         self.was_center_detected = False
-        self.walker = WalkingController(config.walking.step_distance, config.walking.boundary_x, config.walking.boundary_y) if config.walking.enabled and config.walking.mode == "random" else None
+        self.task_one_skill_group = PrioritySkillGroup(
+            tuple((skill.key, skill.cooldown_ms / 1000) for skill in config.action.skills),
+            config.action.skill_interval_ms / 1000,
+        )
+        self.center_skill_group = PrioritySkillGroup(
+            tuple((skill.key, skill.cooldown_ms / 1000) for skill in config.center_target.skills),
+            config.center_target.skill_interval_ms / 1000,
+        )
+        self.walker = WalkingController(config.walking.step_distance, config.walking.boundary_x, config.walking.boundary_y) if config.walking.enabled and config.walking.mode in {"random", "scripted_route"} else None
         self.navigator = (
             RouteNavigator(
                 tuple(Waypoint(point.name, point.x, point.y) for point in config.walking.route.waypoints),
@@ -90,6 +123,10 @@ class AutomationApp:
             if self.navigator and config.walking.route.map_recording.enabled
             else None
         )
+        self.scripted_route: ScriptedRouteController | None = None
+        self.scripted_route_state: str | None = None
+        if config.walking.enabled and config.walking.mode == "scripted_route" and config.active_map.movement_script_path:
+            self.scripted_route = ScriptedRouteController(load_movement_script(base_dir / config.active_map.movement_script_path))
         self.next_walk_at = 0.0
         self.combat = (
             CombatController(
@@ -98,6 +135,7 @@ class AutomationApp:
                     config.crowd_combat.min_targets,
                     config.crowd_combat.skill_cooldown_ms / 1000,
                     config.crowd_combat.skill_interval_ms / 1000,
+                    tuple((skill.key, skill.cooldown_ms / 1000) for skill in config.crowd_combat.skills),
                 )
             )
             if config.crowd_combat.enabled
@@ -116,14 +154,46 @@ class AutomationApp:
             if config.login_recovery.enabled
             else None
         )
+        self.disconnect_recovery = (
+            DisconnectRecoveryController(config.disconnect_recovery, base_dir=base_dir)
+            if config.disconnect_recovery.enabled
+            else None
+        )
         self.town_teleport = (
             TownTeleportController(config.town_teleport, base_dir=base_dir)
             if config.town_teleport.enabled
             else None
         )
+        self.minimap_zoom = MinimapZoomController(
+            config.minimap_zoom.enabled,
+            config.minimap_zoom.town_scroll_steps,
+            config.minimap_zoom.combat_scroll_steps,
+            config.minimap_zoom.interval_ms,
+            config.minimap_zoom.combat_load_wait_ms,
+        )
+        self._town_minimap_zoomed = not config.minimap_zoom.enabled
+        self.map_arrival_wait = (
+            MapArrivalWaitController()
+            if self.scripted_route and config.active_map.arrival_minimap_template_path
+            else None
+        )
+        self.map_arrival_detector = (
+            MultiTemplateDetector(
+                (base_dir / config.active_map.arrival_minimap_template_path,),
+                config.active_map.arrival_minimap_threshold,
+                None,
+            )
+            if self.map_arrival_wait
+            else None
+        )
         self.death_recovery = (
             DeathRecoveryController(config.death_recovery, base_dir=base_dir)
             if config.death_recovery.enabled
+            else None
+        )
+        self.combat_state = (
+            CombatStateController(config.combat_state, base_dir=base_dir)
+            if config.combat_state.enabled
             else None
         )
 
@@ -152,23 +222,25 @@ class AutomationApp:
         return self.config.center_target.enabled and is_inside_window_center_radius(window, detection, self.config.center_target.radius_px)
 
     def _handle_center_target(self, now: float, image_position: tuple[int, int]) -> None:
-        if now - self.last_center_action_at >= self.config.center_target.repeat_interval_ms / 1000:
+        key = self.center_skill_group.next_skill(now)
+        if key:
             if not self.config.action.dry_run:
-                self.skill_input.queue_tap(self.config.center_target.key, coalesce=True)
-                logging.info("Center skill action; screen position=%s; key=%s", image_position, self.config.center_target.key)
+                self.skill_input.queue_tap(key, coalesce=True)
+                logging.info("Center skill action; screen position=%s; key=%s", image_position, key)
             self.last_center_action_at = now
         self.was_center_detected = True
         self.was_task_action_logged = False
 
     def _handle_task_one(self, window: WindowInfo, detection: DetectionResult, cursor_position: tuple[int, int], now: float) -> None:
         self.was_center_detected = False
-        if now - self.last_action_at < self.config.action.repeat_interval_ms / 1000:
+        key = self.task_one_skill_group.next_skill(now)
+        if key is None:
             return
         if not self.config.action.dry_run:
             move_cursor_to_image(window, detection, self.config.pointer.offset_y)
-            self.skill_input.queue_tap(self.config.action.key, coalesce=True)
+            self.skill_input.queue_tap(key, coalesce=True)
             if not self.was_task_action_logged:
-                logging.info("Task 1 action; cursor target=%s; cursor=%s; key=%s", cursor_position, win32api.GetCursorPos(), self.config.action.key)
+                logging.info("Task 1 action; cursor target=%s; cursor=%s; key=%s", cursor_position, win32api.GetCursorPos(), key)
                 self.was_task_action_logged = True
         self.last_action_at = now
 
@@ -209,12 +281,136 @@ class AutomationApp:
             login_recovery.reset()
         if town_teleport := getattr(self, "town_teleport", None):
             town_teleport.reset()
+        self._cancel_minimap_zoom()
+        self._cancel_route_playback()
+        self._reset_combat_state()
         self._pause_for_login(window)
         if self.config.action.dry_run:
             return
         position = (window.left + action.x, window.top + action.y)
         click_screen_position(position)
         logging.info("Death recovery action; action=%s; position=%s", action.label, position)
+
+    def _handle_disconnect_action(self, window: WindowInfo, action: DisconnectAction) -> None:
+        if login_recovery := getattr(self, "login_recovery", None):
+            login_recovery.reset()
+        if town_teleport := getattr(self, "town_teleport", None):
+            town_teleport.reset()
+        self._cancel_minimap_zoom()
+        self._cancel_route_playback()
+        self._reset_combat_state()
+        self._pause_for_login(window)
+        if self.config.action.dry_run:
+            return
+        position = (window.left + action.x, window.top + action.y)
+        click_screen_position(position)
+        logging.info("Disconnect recovery action; action=%s; position=%s", action.label, position)
+
+    def _cancel_route_playback(self) -> None:
+        if scripted_route := getattr(self, "scripted_route", None):
+            scripted_route.cancel()
+        if map_arrival_wait := getattr(self, "map_arrival_wait", None):
+            map_arrival_wait.cancel()
+
+    def _reset_combat_state(self) -> None:
+        if combat_state := getattr(self, "combat_state", None):
+            combat_state.reset()
+
+    def _cancel_minimap_zoom(self) -> None:
+        if minimap_zoom := getattr(self, "minimap_zoom", None):
+            minimap_zoom.cancel()
+        self._town_minimap_zoomed = False
+
+    def _handle_teleport_departure(self, now: float) -> None:
+        if scripted_route := getattr(self, "scripted_route", None):
+            if map_arrival_wait := getattr(self, "map_arrival_wait", None):
+                map_arrival_wait.start()
+                logging.info("Map arrival wait started; map=%s", self.config.active_map.name)
+                return
+            scripted_route.start(now)
+            self.scripted_route_state = None
+            logging.info("Scripted route started")
+            return
+
+    def _run_map_arrival_wait(self, window: WindowInfo, frame: np.ndarray, now: float) -> bool:
+        map_arrival_wait = getattr(self, "map_arrival_wait", None)
+        if map_arrival_wait is None or not map_arrival_wait.active:
+            return False
+        arrival_visible = bool(self.map_arrival_detector and self.map_arrival_detector.detect(frame))
+        route_start_delay_seconds = getattr(self.config.active_map, "route_start_delay_ms", 0) / 1000
+        was_waiting_for_arrival = map_arrival_wait.state == "waiting_for_arrival"
+        still_waiting = map_arrival_wait.observe(arrival_visible, now, route_start_delay_seconds)
+        if was_waiting_for_arrival and map_arrival_wait.state == "waiting_before_route":
+            logging.info(
+                "Map arrival detected; waiting before scripted route; map=%s; delay_ms=%s",
+                self.config.active_map.name,
+                getattr(self.config.active_map, "route_start_delay_ms", 0),
+            )
+        if not self.config.action.dry_run:
+            self.movement_input.set_movement(window.hwnd, ())
+        if not still_waiting and (scripted_route := getattr(self, "scripted_route", None)):
+            scripted_route.start(now)
+            self.scripted_route_state = None
+            logging.info("Map arrival ready; scripted route started; map=%s", self.config.active_map.name)
+        return still_waiting
+
+    def _handle_minimap_zoom_completion(self, phase: str, now: float) -> None:
+        if phase == "town":
+            self._town_minimap_zoomed = True
+            logging.info("Minimap zoom completed; phase=town")
+        elif phase == "combat":
+            logging.info("Minimap zoom completed; phase=combat")
+
+    def _minimap_zoom_position(self, window: WindowInfo, frame: np.ndarray, phase: str) -> tuple[int, int]:
+        if phase == "town" and self.config.town_teleport.town_minimap_roi:
+            left, top, width, height = self.config.town_teleport.town_minimap_roi
+        else:
+            route = self.config.walking.route
+            left, top, width, height = minimap_bounds(
+                frame.shape[1], frame.shape[0], route.minimap.right_px, route.minimap.top_px, route.minimap.width_px, route.minimap.height_px
+            )
+        return window.left + left + width // 2, window.top + top + height // 2
+
+    def _run_minimap_zoom(self, window: WindowInfo, frame: np.ndarray, now: float) -> bool:
+        minimap_zoom = getattr(self, "minimap_zoom", None)
+        if minimap_zoom is None or not minimap_zoom.active:
+            return False
+        self._pause_for_login(window)
+        action = minimap_zoom.next_action(now)
+        if action:
+            if action.phase == "combat" and action.remaining_steps == minimap_zoom.combat_scroll_steps - 1:
+                logging.info("Minimap zoom started; phase=combat; direction=up; steps=%s", minimap_zoom.combat_scroll_steps)
+            if not self.config.action.dry_run:
+                ctrl_wheel_at(self._minimap_zoom_position(window, frame, action.phase), action.direction)
+        if completed := minimap_zoom.consume_completion():
+            self._handle_minimap_zoom_completion(completed, now)
+        return action is not None or completed is not None or minimap_zoom.active
+
+    def _start_town_minimap_zoom(self, town_teleport: TownTeleportController, frame: np.ndarray, now: float) -> bool:
+        minimap_zoom = getattr(self, "minimap_zoom", None)
+        if (
+            minimap_zoom
+            and minimap_zoom.enabled
+            and not self._town_minimap_zoomed
+            and not minimap_zoom.active
+            and not town_teleport.active
+            and town_teleport.is_town(frame)
+        ):
+            minimap_zoom.start_town(now)
+            logging.info("Minimap zoom started; phase=town; direction=down; steps=%s", minimap_zoom.town_scroll_steps)
+            return True
+        return False
+
+    def _scripted_route_step(self, window: WindowInfo, now: float) -> None:
+        scripted_route = self.scripted_route
+        if scripted_route is None:
+            return
+        keys = scripted_route.update(now)
+        if not self.config.action.dry_run:
+            self.movement_input.set_movement(window.hwnd, keys)
+        if scripted_route.state != self.scripted_route_state:
+            logging.info("Scripted route state=%s; segment=%s; keys=%s", scripted_route.state, scripted_route.segment_index, keys)
+            self.scripted_route_state = scripted_route.state
 
     def _route_player_position(self, minimap: np.ndarray, marker_position: tuple[int, int] | None) -> tuple[int, int] | None:
         if marker_position is None:
@@ -231,10 +427,14 @@ class AutomationApp:
         task_frame = frame[roi_top:roi_top + roi_height, roi_left:roi_left + roi_width]
         if self.negative_detector and self.negative_detector.detect(task_frame):
             return ()
+        if self.hsv_detector:
+            hsv_targets = tuple(translate_detection(target, roi_left, roi_top) for target in self.hsv_detector.detect_all(task_frame))
+            if hsv_targets:
+                return hsv_targets
+        if self.map_target_detector and (template_detection := self.map_target_detector.detect(task_frame)):
+            return (translate_detection(template_detection, roi_left, roi_top),)
         if self.detector and (template_detection := self.detector.detect(task_frame)):
             return (translate_detection(template_detection, roi_left, roi_top),)
-        if self.hsv_detector:
-            return tuple(translate_detection(target, roi_left, roi_top) for target in self.hsv_detector.detect_all(task_frame))
         return ()
 
     def run(self, once: bool = False) -> None:
@@ -244,6 +444,18 @@ class AutomationApp:
             self.current_hwnd = window.hwnd
             frame = self.capture(window)
             captured_at = time.monotonic()
+            disconnect_recovery = getattr(self, "disconnect_recovery", None)
+            if disconnect_recovery:
+                disconnect_action = disconnect_recovery.handle(frame)
+                if disconnect_recovery.active:
+                    if disconnect_action:
+                        self._handle_disconnect_action(window, disconnect_action)
+                    else:
+                        self._pause_for_login(window)
+                    if once:
+                        return
+                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    continue
             death_recovery = getattr(self, "death_recovery", None)
             if death_recovery:
                 death_action = death_recovery.handle(frame)
@@ -260,6 +472,9 @@ class AutomationApp:
             if login_recovery:
                 login_action = login_recovery.handle(frame, captured_at)
                 if login_recovery.active:
+                    self._cancel_minimap_zoom()
+                    self._cancel_route_playback()
+                    self._reset_combat_state()
                     if login_action:
                         self._handle_login_action(window, login_action)
                     else:
@@ -270,6 +485,12 @@ class AutomationApp:
                     continue
             town_teleport = getattr(self, "town_teleport", None)
             if town_teleport:
+                self._start_town_minimap_zoom(town_teleport, frame, captured_at)
+                if self._run_minimap_zoom(window, frame, captured_at):
+                    if once:
+                        return
+                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    continue
                 teleport_action = town_teleport.handle(frame, captured_at)
                 if town_teleport.active:
                     if teleport_action:
@@ -280,13 +501,40 @@ class AutomationApp:
                         return
                     time.sleep(self.config.runtime.poll_interval_ms / 1000)
                     continue
+                if town_teleport.consume_departure():
+                    self._handle_teleport_departure(captured_at)
+                    if self._run_minimap_zoom(window, frame, captured_at):
+                        if once:
+                            return
+                        time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                        continue
+                if self._run_map_arrival_wait(window, frame, captured_at):
+                    if once:
+                        return
+                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    continue
             targets = self._detect_targets(frame)
             detected_at = time.monotonic()
             now = detected_at
+            if combat_state := getattr(self, "combat_state", None):
+                if state_action := combat_state.handle(frame, now):
+                    if not self.config.action.dry_run:
+                        self.skill_input.queue_tap(state_action.key, coalesce=True)
+                        logging.info("Combat state timeout; absent_ms=%s; key=%s", self.config.combat_state.absence_timeout_ms, state_action.key)
             target = select_nearest_to_center(targets, frame.shape[1], frame.shape[0]) if targets else None
             crowd_key = self.combat.observe(now, len(targets)) if self.combat else None
-            avoid_crowd = bool(self.combat and target and self.combat.should_avoid_crowd(len(targets)))
-            if self.walker and now >= self.next_walk_at:
+            scripted_route = getattr(self, "scripted_route", None)
+            route_playback_active = bool(scripted_route and scripted_route.active)
+            avoid_crowd = bool(
+                getattr(self.config.crowd_combat, "avoid_movement_enabled", True)
+                and self.combat
+                and target
+                and self.combat.should_avoid_crowd(len(targets))
+                and not route_playback_active
+            )
+            if scripted_route and scripted_route.active:
+                self._scripted_route_step(window, now)
+            elif self.walker and now >= self.next_walk_at:
                 excluded_keys = directions_toward_target(target, frame.shape[1], frame.shape[0]) if avoid_crowd else ()
                 keys, distance = self.walker.next_step(excluded_keys=excluded_keys)
                 if not self.config.action.dry_run:

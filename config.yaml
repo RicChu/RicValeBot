@@ -7,6 +7,26 @@ capture:
   # PrintWindow 失敗時，是否改抓桌面上同位置的區域。
   fallback_to_desktop: true
 
+# Change only active_map to switch teleport destination, lock-target templates,
+# and the WASD movement script for a combat map. HSV health-bar detection stays global.
+active_map: the_forge
+
+maps:
+  demon_mouth:
+    # Omitted resource paths use assets/maps/demon_mouth/<default filename>.
+    target_template_paths: []
+    movement_script_path: null
+    arrival_minimap_template_path: null
+  night_garden:
+    movement_script_path: null
+    arrival_minimap_template_path: null
+  the_forge:
+    arrival_minimap_threshold: 0.70
+    # Detect the arrival minimap first, then wait this long before replaying WASD.
+    route_start_delay_ms: 2000
+  goblin_warcamp:
+    arrival_minimap_threshold: 0.70
+
 detection:
   # 任一範本辨識成功都會觸發相同的任務 1（按 3）。
   template_paths:
@@ -23,7 +43,7 @@ detection:
     enabled: true
     width: 1000
     height: 800
-    offset_y: 50
+    offset_y: 0
 
 hsv_bar:
   enabled: true
@@ -57,6 +77,10 @@ action:
   key_hold_ms: 0
   # 圖案持續存在時，每隔多久再送出一次按鍵。
   repeat_interval_ms: 20
+  # 同一技能組兩次施放的最小間隔。
+  skill_interval_ms: 20
+  skills:
+    - {key: "3", cooldown_ms: 20}
 
 pointer:
   # 游標移到圖案中心後的垂直偏移量；-50 表示圖案上方 50 像素。
@@ -77,6 +101,11 @@ login_recovery:
     template_path: assets/login/character/didi_killer.png
     play_template_path: assets/login/character/play.png
 
+disconnect_recovery:
+  enabled: true
+  threshold: 0.82
+  confirm_template_path: assets/disconnect/confirm.png
+
 # 主城時使用傳送石前往指定地圖。每一步都必須先識別到對應圖示才會操作。
 town_teleport:
   enabled: true
@@ -89,42 +118,82 @@ town_teleport:
   consumables_template_path: assets/teleport/consumables.png
   waystone_template_path: assets/teleport/waystone.png
   waystone_confirm_template_path: assets/teleport/waystone_confirm.png
+  waystone_confirm_template_paths:
+    - assets/teleport/waystone_confirm.png
+    - assets/teleport/waystone_confirm2.png
   teleport_confirm_template_path: assets/teleport/teleport_confirm.png
-  destination:
-    name: demon_mouth
-    template_path: assets/teleport/maps/demon_mouth.png
+
+# 正規化小地圖倍率；游標會移至小地圖中央後送出 Ctrl+滾輪。
+minimap_zoom:
+  enabled: false
+  # 主城：滾輪向下 30 次，再開始傳送。
+  town_scroll_steps: 30
+  # 戰鬥地圖：滾輪向上 30 次，再開始錄製路線。
+  combat_scroll_steps: 30
+  # 離開主城後先等待地圖與小地圖載入完成，再開始縮放。
+  combat_load_wait_ms: 5000
+  interval_ms: 10
+
+# 若戰鬥狀態圖示連續消失 10 秒，按一次 4 並重新計時。
+combat_state:
+  enabled: true
+  template_path: assets/combat/battle_state.png
+  threshold: 0.85
+  absence_timeout_ms: 5000
+  key: "4"
+  # [left, top, width, height]：只掃描遊戲視窗左上角的戰鬥狀態圖示區。
+  roi: [0, 0, 500, 350]
 
 # 死亡視窗優先於登入、傳送、戰鬥與走路；只點一次後等待視窗消失。
 death_recovery:
   enabled: true
   threshold: 0.82
   town_respawn_template_path: assets/death/town_respawn.png
+  healer_enabled: true
+  healer_template_path: assets/death/healer.png
+  healer_dialog_template_path: assets/death/healer_dialog.png
+  healer_threshold: 0.80
 
 # 中心目標在全螢幕中心半徑內時，先立即按 2，再每 2 秒重複一次。
 center_target:
-  enabled: true
+  enabled: false
   template_paths:
     - assets/center_target
   radius_px: 350
   key: "2"
   key_hold_ms: 0
   repeat_interval_ms: 500
+  skill_interval_ms: 500
+  skills:
+    - {key: "2", cooldown_ms: 500}
 
 crowd_combat:
   enabled: true
-  keys: ["F2", "F3", "F4"]
+  # false 時仍施放群怪技能，但走路不再避開怪群方向。
+  avoid_movement_enabled: true
+  keys: ["2","F2", "F3", "F4","F5","F6"]
   min_targets: 2
   skill_cooldown_ms: 6000
   skill_interval_ms: 330
+  skills:
+    - {key: "2", cooldown_ms: 26000}
+    - {key: "F2", cooldown_ms: 6000}
+    - {key: "F3", cooldown_ms: 6000}
+    - {key: "F4", cooldown_ms: 6000}
+    - {key: "F5", cooldown_ms: 5000}
+    - {key: "F6", cooldown_ms: 2000}
 
 walking:
   enabled: true
-  # random：保留原本區域內亂走；route：依右上小地圖路徑點走動。
-  mode: random
-  step_distance: 100
+  # 可選模式：
+  # - random：保留原本安全範圍內的隨機走路，使用 step_distance、speed_px_per_sec、boundary_x、boundary_y。
+  # - route：依 route.waypoints 的 A/B/C 等手動座標走動，可選用 route.map_recording 進行定位。
+  # - scripted_route：主城傳送完成後，依 active_map.movement_script_path 重播錄製的 WASD 時間片段。
+  mode: scripted_route
+  step_distance: 50
   speed_px_per_sec: 100
-  boundary_x: 600
-  boundary_y: 400
+  boundary_x: 9999  # 左右各最多 60 px
+  boundary_y: 9999   # 上下各最多 40 px
   route:
     # 以遊戲視窗右上角為基準；不同解析度仍會自動靠右。
     minimap: {right_px: 20, top_px: 20, width_px: 340, height_px: 360}
@@ -142,11 +211,11 @@ walking:
       - {name: A, x: 180, y: 150}
       - {name: B, x: 220, y: 180}
       - {name: C, x: 185, y: 210}
-
 skill_queue:
   enabled: true
   queue_interval_ms: 330
   schedules:
+    - {key: "2", interval_seconds: 5}
     - {key: "6", interval_seconds: 45}
     - {key: "5", interval_seconds: 20}
     - {key: "6", interval_seconds: 20}
@@ -156,6 +225,7 @@ runtime:
   # 與任務 1 的獨立冷卻同步，每 20 ms 重新確認圖案是否仍存在。
   poll_interval_ms: 20
   detection_timing_log_interval_ms: 5000
+  #  off, events
   log_mode: off
   save_debug_frame: false
   debug_frame_path: debug/latest_detection.png

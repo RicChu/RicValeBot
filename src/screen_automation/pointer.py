@@ -39,3 +39,20 @@ def double_click_screen_position(position: tuple[int, int]) -> tuple[int, int]:
     time.sleep(0.05)
     click_screen_position(position)
     return position
+
+
+def ctrl_wheel_at(position: tuple[int, int], direction: int) -> tuple[int, int]:
+    """Sends one Ctrl+mouse-wheel tick at the screen position.
+
+    A positive direction zooms in; a negative direction zooms out.
+    """
+    if direction == 0:
+        raise ValueError("Wheel direction must not be zero")
+    win32api.SetCursorPos(position)
+    delta = win32con.WHEEL_DELTA if direction > 0 else -win32con.WHEEL_DELTA
+    win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+    try:
+        win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
+    finally:
+        win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+    return position

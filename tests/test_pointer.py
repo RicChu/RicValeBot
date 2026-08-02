@@ -1,20 +1,27 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import call, patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
-from screen_automation.detector import DetectionResult
-from screen_automation.pointer import image_hover_position
-from screen_automation.window import WindowInfo
+from screen_automation.pointer import ctrl_wheel_at
 
 
-class PointerPositionTests(unittest.TestCase):
-    def test_places_cursor_twenty_pixels_above_detected_image_center(self) -> None:
-        window = WindowInfo(hwnd=1, title="Target", left=100, top=200, width=500, height=400)
-        detection = DetectionResult(score=0.95, left=30, top=40, width=20, height=10)
+class PointerTests(unittest.TestCase):
+    def test_ctrl_wheel_moves_cursor_holds_control_and_scrolls_in_direction(self) -> None:
+        with patch("screen_automation.pointer.win32api") as api, patch("screen_automation.pointer.win32con") as con:
+            con.VK_CONTROL = 17
+            con.KEYEVENTF_KEYUP = 2
+            con.MOUSEEVENTF_WHEEL = 2048
+            con.WHEEL_DELTA = 120
 
-        self.assertEqual(image_hover_position(window, detection, offset_y=-20), (140, 225))
+            result = ctrl_wheel_at((300, 400), direction=-1)
+
+        self.assertEqual(result, (300, 400))
+        api.SetCursorPos.assert_called_once_with((300, 400))
+        self.assertEqual(api.keybd_event.call_args_list, [call(17, 0, 0, 0), call(17, 0, 2, 0)])
+        api.mouse_event.assert_called_once_with(2048, 0, 0, -120, 0)
 
 
 if __name__ == "__main__":
