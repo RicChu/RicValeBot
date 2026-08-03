@@ -375,7 +375,7 @@ class AppLoggingTests(unittest.TestCase):
         self.assertEqual(movements, [("A",)])
         self.assertIn("F2", skills)
 
-    def test_crowd_avoidance_can_be_disabled_without_disabling_crowd_skills(self) -> None:
+    def test_detected_targets_hold_position_when_crowd_avoidance_is_disabled(self) -> None:
         app = make_app(None)
         app.config.action.dry_run = False
         app.config.crowd_combat.avoid_movement_enabled = False
@@ -390,14 +390,16 @@ class AppLoggingTests(unittest.TestCase):
             )
         )
         skills: list[str] = []
-        app.movement_input = SimpleNamespace(set_movement=lambda *_: None, release=lambda *_: None)
+        movements: list[tuple[str, ...]] = []
+        app.movement_input = SimpleNamespace(set_movement=lambda _, keys: movements.append(keys), release=lambda *_: None)
         app.skill_input = SimpleNamespace(queue_tap=lambda key, **_: skills.append(key), process=lambda *_: None, clear=lambda: None)
         window = WindowInfo(hwnd=1, title="Target", left=0, top=0, width=100, height=100)
 
         with patch("screen_automation.app.find_window", return_value=window), patch("screen_automation.app.move_cursor_to_image"):
             app.run(once=True)
 
-        self.assertEqual(excluded, [()])
+        self.assertEqual(excluded, [])
+        self.assertEqual(movements, [()])
         self.assertIn("F2", skills)
 
 

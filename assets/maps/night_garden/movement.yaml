@@ -1,0 +1,6 @@
+version: 1
+segments:
+- keys:
+  - D
+  - S
+  duration_ms: 2000
