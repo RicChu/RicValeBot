@@ -11,9 +11,11 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
 from screen_automation.app import AutomationApp, existing_template_paths
 from screen_automation.combat import CombatController, CrowdSkillGroup, PrioritySkillGroup
+from screen_automation.combat_start import CombatStartSkillGroup
 from screen_automation.config import CenterROIConfig, SkillConfig
 from screen_automation.detector import DetectionResult
 from screen_automation.death_recovery import DeathAction
+from screen_automation.disconnect_recovery import DisconnectAction
 from screen_automation.login_recovery import LoginAction
 from screen_automation.map_arrival_wait import MapArrivalWaitController
 from screen_automation.town_teleport import TeleportAction
@@ -89,6 +91,19 @@ class AppLoggingTests(unittest.TestCase):
 
         self.assertEqual(queued, ["2", "3", "2"])
 
+    def test_task_one_updates_cursor_even_when_its_skill_is_cooling_down(self) -> None:
+        app = make_app(None)
+        app.config.action.dry_run = False
+        app.task_one_skill_group = PrioritySkillGroup((("3", 1.0),), 0.02)
+        window = WindowInfo(hwnd=7, title="Target", left=0, top=0, width=100, height=100)
+        target = DetectionResult(score=0.95, left=40, top=50, width=20, height=10)
+
+        with patch("screen_automation.app.move_cursor_to_image") as move:
+            app._handle_task_one(window, target, (50, 40), 0.0)
+            app._handle_task_one(window, target, (50, 40), 0.1)
+
+        self.assertEqual(move.call_count, 2)
+
     def test_teleport_departure_waits_for_arrival_minimap_before_scripted_route(self) -> None:
         app = make_app(None)
         route_start_calls: list[float] = []
@@ -100,6 +115,26 @@ class AppLoggingTests(unittest.TestCase):
 
         self.assertEqual(route_start_calls, [])
         self.assertEqual(wait_start_calls, [True])
+
+    def test_recovery_events_request_status_verification_before_combat_skills(self) -> None:
+        app = make_app(None)
+        app.config.combat_start = SimpleNamespace(enabled=True)
+        app.combat_start_skill_group = CombatStartSkillGroup(("4",), 0.33, 0.50)
+        app.combat_start_status_detector = SimpleNamespace(detect=lambda _: None)
+        app.scripted_route = None
+        app.map_arrival_wait = None
+        window = WindowInfo(hwnd=7, title="Target", left=0, top=0, width=100, height=100)
+
+        app._handle_death_action(window, DeathAction("town_respawn", 50, 50))
+        self.assertTrue(app.combat_start_skill_group.active)
+        app.combat_start_skill_group.reset()
+
+        app._handle_disconnect_action(window, DisconnectAction("disconnect_confirm", 50, 50))
+        self.assertTrue(app.combat_start_skill_group.active)
+        app.combat_start_skill_group.reset()
+
+        app._handle_teleport_departure(5.0)
+        self.assertTrue(app.combat_start_skill_group.active)
 
     def test_arrival_minimap_detection_starts_the_scripted_route(self) -> None:
         app = make_app(None)

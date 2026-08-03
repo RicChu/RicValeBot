@@ -376,7 +376,7 @@ runtime: {poll_interval_ms: 20, save_debug_frame: false, debug_frame_path: debug
 
         self.assertIsNone(config.active_map.arrival_minimap_template_path)
 
-    def test_reads_combat_state_configuration(self) -> None:
+    def test_rejects_removed_combat_state_configuration(self) -> None:
         content = """
 target_window_title: Target
 capture: {method: mss, fallback_to_desktop: true}
@@ -390,11 +390,36 @@ combat_state: {enabled: true, template_path: assets/combat/battle_state.png, thr
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
             path.write_text(content, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "combat_state has been removed"):
+                load_config(path)
+
+    def test_reads_one_shot_combat_start_skill_sequence(self) -> None:
+        content = """
+target_window_title: Target
+capture: {method: mss, fallback_to_desktop: true}
+detection: {template_paths: [], negative_template_paths: [], threshold: 0.5, roi: null}
+action: {key: '3', dry_run: true, key_hold_ms: 0, repeat_interval_ms: 20}
+pointer: {offset_y: -50}
+center_target: {template_paths: [], radius_px: 250, key: '2', key_hold_ms: 0, repeat_interval_ms: 500}
+runtime: {poll_interval_ms: 20, save_debug_frame: false, debug_frame_path: debug/latest_detection.png}
+combat_start:
+  enabled: true
+  skill_interval_ms: 330
+  verify_delay_ms: 500
+  status_template_path: assets/combat/combat_state_icon.png
+  status_threshold: 0.85
+  status_roi: [0, 0, 500, 350]
+  skills: [{key: '4'}, {key: 'F2'}]
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.yaml"
+            path.write_text(content, encoding="utf-8")
             config = load_config(path)
 
-        self.assertTrue(config.combat_state.enabled)
-        self.assertEqual((config.combat_state.absence_timeout_ms, config.combat_state.key), (10000, "4"))
-        self.assertEqual(config.combat_state.roi, (0, 0, 500, 350))
+        self.assertTrue(config.combat_start.enabled)
+        self.assertEqual(config.combat_start.skills, ("4", "F2"))
+        self.assertEqual((config.combat_start.skill_interval_ms, config.combat_start.verify_delay_ms), (330, 500))
+        self.assertEqual(config.combat_start.status_roi, (0, 0, 500, 350))
 
     def test_reads_death_recovery_configuration(self) -> None:
         content = """

@@ -5,16 +5,16 @@ import time
 from pathlib import Path
 
 import cv2
-import mss
 import numpy as np
 import win32api
 
+from .capture import ReusableMSSCapture
 from .center_target import is_inside_window_center_radius
 from .combat import CombatController, CrowdSkillGroup, PrioritySkillGroup, directions_toward_target, select_nearest_to_center, steer_away_from_target
-from .combat_state import CombatStateController
+from .combat_start import CombatStartSkillGroup
 from .config import AppConfig
 from .death_recovery import DeathAction, DeathRecoveryController
-from .detector import DetectionResult, MultiTemplateDetector
+from .detector import DetectionResult, MultiTemplateDetector, TemplateDetector
 from .disconnect_recovery import DisconnectAction, DisconnectRecoveryController
 from .hsv_bar import HSVBarDetector
 from .input_coordinator import MovementInput, SkillTapQueue
@@ -28,7 +28,7 @@ from .pointer import click_screen_position, ctrl_wheel_at, double_click_screen_p
 from .roi import center_roi_bounds, translate_detection
 from .scripted_route import ScriptedRouteController, load_movement_script
 from .skill_queue import SkillScheduler
-from .timing import DetectionTimingMonitor
+from .timing import DetectionTimingMonitor, remaining_poll_sleep_seconds
 from .town_teleport import TeleportAction, TownTeleportController
 from .walking import WalkingController
 from .window import WindowInfo, capture_print_window, find_window
@@ -48,6 +48,7 @@ class AutomationApp:
     def __init__(self, config: AppConfig, base_dir: Path) -> None:
         self.config = config
         self.base_dir = base_dir
+        self.desktop_capture = ReusableMSSCapture()
         self.detector = (
             MultiTemplateDetector(tuple(base_dir / path for path in config.detection.template_paths), config.detection.threshold, config.detection.roi)
             if config.detection.template_paths else None
@@ -102,6 +103,20 @@ class AutomationApp:
         self.center_skill_group = PrioritySkillGroup(
             tuple((skill.key, skill.cooldown_ms / 1000) for skill in config.center_target.skills),
             config.center_target.skill_interval_ms / 1000,
+        )
+        self.combat_start_skill_group = CombatStartSkillGroup(
+            config.combat_start.skills,
+            config.combat_start.skill_interval_ms / 1000,
+            config.combat_start.verify_delay_ms / 1000,
+        )
+        self.combat_start_status_detector = (
+            TemplateDetector(
+                base_dir / config.combat_start.status_template_path,
+                config.combat_start.status_threshold,
+                config.combat_start.status_roi,
+            )
+            if config.combat_start.enabled
+            else None
         )
         self.walker = WalkingController(config.walking.step_distance, config.walking.boundary_x, config.walking.boundary_y) if config.walking.enabled and config.walking.mode in {"random", "scripted_route"} else None
         self.navigator = (
@@ -191,16 +206,20 @@ class AutomationApp:
             if config.death_recovery.enabled
             else None
         )
-        self.combat_state = (
-            CombatStateController(config.combat_state, base_dir=base_dir)
-            if config.combat_state.enabled
-            else None
-        )
-
     def stop(self) -> None:
         if self.current_hwnd and not self.config.action.dry_run:
             self.movement_input.release(self.current_hwnd)
         self.skill_input.clear()
+        self.desktop_capture.close()
+
+    def _sleep_until_next_poll(self, started_at: float) -> None:
+        delay = remaining_poll_sleep_seconds(
+            self.config.runtime.poll_interval_ms,
+            started_at,
+            time.monotonic(),
+        )
+        if delay:
+            time.sleep(delay)
 
     def capture(self, window: WindowInfo) -> np.ndarray:
         try:
@@ -210,9 +229,10 @@ class AutomationApp:
             if not self.config.capture.fallback_to_desktop:
                 raise
             logging.warning("PrintWindow capture failed; using desktop capture: %s", error)
-        with mss.mss() as sct:
-            shot = sct.grab({"left": window.left, "top": window.top, "width": window.width, "height": window.height})
-            return np.asarray(shot)[:, :, :3].copy()
+        shot = self.desktop_capture.grab({"left": window.left, "top": window.top, "width": window.width, "height": window.height})
+        # MSS yields BGRA. OpenCV's colour conversions accept it directly, so
+        # retaining the native buffer avoids a full-frame BGR copy each cycle.
+        return np.asarray(shot)
 
     def annotate(self, frame: np.ndarray, detection: DetectionResult) -> None:
         cv2.rectangle(frame, (detection.left, detection.top), (detection.left + detection.width, detection.top + detection.height), (0, 255, 0), 2)
@@ -233,11 +253,14 @@ class AutomationApp:
 
     def _handle_task_one(self, window: WindowInfo, detection: DetectionResult, cursor_position: tuple[int, int], now: float) -> None:
         self.was_center_detected = False
+        # Pointer tracking is intentionally independent from skill cooldowns.
+        # The bar can move before Task 1 is ready to emit its next key.
+        if not self.config.action.dry_run:
+            move_cursor_to_image(window, detection, self.config.pointer.offset_y)
         key = self.task_one_skill_group.next_skill(now)
         if key is None:
             return
         if not self.config.action.dry_run:
-            move_cursor_to_image(window, detection, self.config.pointer.offset_y)
             self.skill_input.queue_tap(key, coalesce=True)
             if not self.was_task_action_logged:
                 logging.info("Task 1 action; cursor target=%s; cursor=%s; key=%s", cursor_position, win32api.GetCursorPos(), key)
@@ -283,7 +306,7 @@ class AutomationApp:
             town_teleport.reset()
         self._cancel_minimap_zoom()
         self._cancel_route_playback()
-        self._reset_combat_state()
+        self._trigger_combat_start("death_recovery", time.monotonic())
         self._pause_for_login(window)
         if self.config.action.dry_run:
             return
@@ -298,7 +321,7 @@ class AutomationApp:
             town_teleport.reset()
         self._cancel_minimap_zoom()
         self._cancel_route_playback()
-        self._reset_combat_state()
+        self._trigger_combat_start("disconnect_recovery", time.monotonic())
         self._pause_for_login(window)
         if self.config.action.dry_run:
             return
@@ -312,9 +335,33 @@ class AutomationApp:
         if map_arrival_wait := getattr(self, "map_arrival_wait", None):
             map_arrival_wait.cancel()
 
-    def _reset_combat_state(self) -> None:
-        if combat_state := getattr(self, "combat_state", None):
-            combat_state.reset()
+    def _trigger_combat_start(self, reason: str, now: float) -> None:
+        combat_start_config = getattr(self.config, "combat_start", None)
+        combat_start_skill_group = getattr(self, "combat_start_skill_group", None)
+        if (
+            combat_start_config is None
+            or combat_start_skill_group is None
+            or not combat_start_config.enabled
+        ):
+            return
+        combat_start_skill_group.trigger(reason, now)
+        logging.info("Combat start verification requested; reason=%s", reason)
+
+    def _handle_combat_start(self, frame: np.ndarray, now: float) -> None:
+        combat_start_skill_group = getattr(self, "combat_start_skill_group", None)
+        status_detector = getattr(self, "combat_start_status_detector", None)
+        if combat_start_skill_group is None or status_detector is None or not combat_start_skill_group.active:
+            return
+        status_visible = status_detector.detect(frame) is not None
+        was_active = combat_start_skill_group.active
+        key = combat_start_skill_group.next_skill(status_visible, now)
+        if was_active and not combat_start_skill_group.active:
+            logging.info("Combat start verification confirmed; status icon is visible")
+            return
+        if key is None or self.config.action.dry_run:
+            return
+        self.skill_input.queue_tap(key, coalesce=True)
+        logging.info("Combat start action; status_visible=%s; key=%s", status_visible, key)
 
     def _cancel_minimap_zoom(self) -> None:
         if minimap_zoom := getattr(self, "minimap_zoom", None):
@@ -322,6 +369,7 @@ class AutomationApp:
         self._town_minimap_zoomed = False
 
     def _handle_teleport_departure(self, now: float) -> None:
+        self._trigger_combat_start("town_teleport", now)
         if scripted_route := getattr(self, "scripted_route", None):
             if map_arrival_wait := getattr(self, "map_arrival_wait", None):
                 map_arrival_wait.start()
@@ -454,7 +502,7 @@ class AutomationApp:
                         self._pause_for_login(window)
                     if once:
                         return
-                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    self._sleep_until_next_poll(detection_started_at)
                     continue
             death_recovery = getattr(self, "death_recovery", None)
             if death_recovery:
@@ -466,7 +514,7 @@ class AutomationApp:
                         self._pause_for_login(window)
                     if once:
                         return
-                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    self._sleep_until_next_poll(detection_started_at)
                     continue
             login_recovery = getattr(self, "login_recovery", None)
             if login_recovery:
@@ -474,14 +522,13 @@ class AutomationApp:
                 if login_recovery.active:
                     self._cancel_minimap_zoom()
                     self._cancel_route_playback()
-                    self._reset_combat_state()
                     if login_action:
                         self._handle_login_action(window, login_action)
                     else:
                         self._pause_for_login(window)
                     if once:
                         return
-                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    self._sleep_until_next_poll(detection_started_at)
                     continue
             town_teleport = getattr(self, "town_teleport", None)
             if town_teleport:
@@ -489,7 +536,7 @@ class AutomationApp:
                 if self._run_minimap_zoom(window, frame, captured_at):
                     if once:
                         return
-                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    self._sleep_until_next_poll(detection_started_at)
                     continue
                 teleport_action = town_teleport.handle(frame, captured_at)
                 if town_teleport.active:
@@ -499,29 +546,48 @@ class AutomationApp:
                         self._pause_for_login(window)
                     if once:
                         return
-                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    self._sleep_until_next_poll(detection_started_at)
                     continue
                 if town_teleport.consume_departure():
                     self._handle_teleport_departure(captured_at)
                     if self._run_minimap_zoom(window, frame, captured_at):
                         if once:
                             return
-                        time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                        self._sleep_until_next_poll(detection_started_at)
                         continue
                 if self._run_map_arrival_wait(window, frame, captured_at):
                     if once:
                         return
-                    time.sleep(self.config.runtime.poll_interval_ms / 1000)
+                    self._sleep_until_next_poll(detection_started_at)
                     continue
             targets = self._detect_targets(frame)
             detected_at = time.monotonic()
             now = detected_at
-            if combat_state := getattr(self, "combat_state", None):
-                if state_action := combat_state.handle(frame, now):
-                    if not self.config.action.dry_run:
-                        self.skill_input.queue_tap(state_action.key, coalesce=True)
-                        logging.info("Combat state timeout; absent_ms=%s; key=%s", self.config.combat_state.absence_timeout_ms, state_action.key)
             target = select_nearest_to_center(targets, frame.shape[1], frame.shape[0]) if targets else None
+            self._handle_combat_start(frame, now)
+
+            # Target coordinates belong to this captured frame.  Handle pointer
+            # and target skills before walking/navigation makes them stale.
+            if target:
+                image_position = (window.left + target.left + target.width // 2, window.top + target.top + target.height // 2)
+                cursor_position = image_hover_position(window, target, self.config.pointer.offset_y)
+                self.was_detected = True
+                self._handle_task_one(window, target, cursor_position, now)
+                if self._is_center_hsv_target(window, target):
+                    self._handle_center_target(now, image_position)
+                if self.config.runtime.save_debug_frame:
+                    self.annotate(frame, target)
+                    debug_path = self.base_dir / self.config.runtime.debug_frame_path
+                    debug_path.parent.mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(str(debug_path), frame)
+            else:
+                self.was_detected = False
+                self.was_task_action_logged = False
+                self.was_center_detected = False
+
+            if not self.config.action.dry_run:
+                self.skill_input.process(window.hwnd, now)
+
             crowd_key = self.combat.observe(now, len(targets)) if self.combat else None
             scripted_route = getattr(self, "scripted_route", None)
             route_playback_active = bool(scripted_route and scripted_route.active)
@@ -578,23 +644,6 @@ class AutomationApp:
                     if not self.config.action.dry_run:
                         self.skill_input.queue_tap(key)
 
-            if target:
-                image_position = (window.left + target.left + target.width // 2, window.top + target.top + target.height // 2)
-                cursor_position = image_hover_position(window, target, self.config.pointer.offset_y)
-                self.was_detected = True
-                self.annotate(frame, target)
-                if self.config.runtime.save_debug_frame:
-                    debug_path = self.base_dir / self.config.runtime.debug_frame_path
-                    debug_path.parent.mkdir(parents=True, exist_ok=True)
-                    cv2.imwrite(str(debug_path), frame)
-                self._handle_task_one(window, target, cursor_position, now)
-                if self._is_center_hsv_target(window, target):
-                    self._handle_center_target(now, image_position)
-            else:
-                self.was_detected = False
-                self.was_task_action_logged = False
-                self.was_center_detected = False
-
             if not self.config.action.dry_run:
                 self.skill_input.process(window.hwnd, now)
             if monitor := getattr(self, "timing_monitor", None):
@@ -617,4 +666,4 @@ class AutomationApp:
                     )
             if once:
                 return
-            time.sleep(self.config.runtime.poll_interval_ms / 1000)
+            self._sleep_until_next_poll(detection_started_at)

@@ -320,17 +320,21 @@ minimap_zoom:
 
 `combat_load_wait_ms` 是傳送離開主城後、開始縮放前的等待時間；等待時會釋放 WASD 並清空技能。`interval_ms` 是相鄰縮放事件的最小間隔；實際間隔也會受主迴圈的 `runtime.poll_interval_ms` 限制。乾跑模式只模擬縮放流程，不會送出 Ctrl 或滾輪輸入。
 
-## 戰鬥狀態逾時
+## 恢復後狀態確認技能
 
-`combat_state` 以戰鬥狀態圖示確認目前處於戰鬥；圖示連續未出現達設定秒數後，程式將按一次指定按鍵並重新計時。預設為 10 秒後按 `4`，不會在每一輪偵測都重複送鍵：
+死亡復活、斷線回復與傳送石離開主城後，`combat_start` 會檢查左上角狀態圖示。圖示不存在時依序施放整組技能；整組結束等待 `verify_delay_ms` 後再次檢查，直到圖示出現才停止重試。
 
 ```yaml
-combat_state:
+combat_start:
   enabled: true
-  template_path: assets/combat/battle_state.png
-  threshold: 0.85
-  absence_timeout_ms: 10000
-  key: "4"
+  skill_interval_ms: 330
+  verify_delay_ms: 500
+  status_template_path: assets/combat/combat_state_icon.png
+  status_threshold: 0.85
+  status_roi: [0, 0, 500, 350]
+  skills:
+    - key: "4"
+    - key: "F2"
 ```
 
 ## 死亡回復

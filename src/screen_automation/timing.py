@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+def remaining_poll_sleep_seconds(target_interval_ms: int, started_at: float, now: float) -> float:
+    """Return only the unspent fraction of a desired poll interval."""
+    return max(0.0, target_interval_ms / 1000 - (now - started_at))
+
+
 @dataclass(frozen=True)
 class DetectionTimingReport:
     sample_count: int

@@ -1,5 +1,9 @@
 version: 1
 segments:
 - keys:
-  - D
-  duration_ms: 2000
+  - S
+  duration_ms: 1500
+
+- keys:
+  - A
+  duration_ms: 4000

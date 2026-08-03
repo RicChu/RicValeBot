@@ -9,7 +9,7 @@ capture:
 
 # Change only active_map to switch teleport destination, lock-target templates,
 # and the WASD movement script for a combat map. HSV health-bar detection stays global.
-active_map: the_forge
+active_map: goblin_warcamp
 
 maps:
   demon_mouth:
@@ -26,6 +26,10 @@ maps:
     route_start_delay_ms: 2000
   goblin_warcamp:
     arrival_minimap_threshold: 0.70
+    route_start_delay_ms: 1000
+  starfall_tundra:
+    arrival_minimap_threshold: 0.70
+    route_start_delay_ms: 1000
 
 detection:
   # 任一範本辨識成功都會觸發相同的任務 1（按 3）。
@@ -109,7 +113,7 @@ disconnect_recovery:
 # 主城時使用傳送石前往指定地圖。每一步都必須先識別到對應圖示才會操作。
 town_teleport:
   enabled: true
-  threshold: 0.70
+  threshold: 0.60
   action_delay_ms: 700
   stage_timeout_ms: 8000
   town_minimap_template_path: assets/teleport/city_minimap.png
@@ -134,15 +138,19 @@ minimap_zoom:
   combat_load_wait_ms: 5000
   interval_ms: 10
 
-# 若戰鬥狀態圖示連續消失 10 秒，按一次 4 並重新計時。
-combat_state:
+# 偵測到目標、開始一場新戰鬥時，依序各施放一次技能。
+combat_start:
   enabled: true
-  template_path: assets/combat/battle_state.png
-  threshold: 0.85
-  absence_timeout_ms: 5000
-  key: "4"
-  # [left, top, width, height]：只掃描遊戲視窗左上角的戰鬥狀態圖示區。
-  roi: [0, 0, 500, 350]
+  # 死亡、斷線回復或傳送石後，確認左上角狀態圖示前的技能組。
+  skill_interval_ms: 330
+  # 整組技能放完後，等待多久才再次檢查狀態圖示並決定是否重放。
+  verify_delay_ms: 500
+  status_template_path: assets/combat/combat_state_icon.png
+  status_threshold: 0.85
+  # [left, top, width, height]：左上角狀態圖示區域。
+  status_roi: [0, 0, 500, 350]
+  skills:
+    - key: "4"
 
 # 死亡視窗優先於登入、傳送、戰鬥與走路；只點一次後等待視窗消失。
 death_recovery:
@@ -171,12 +179,13 @@ crowd_combat:
   enabled: true
   # false 時仍施放群怪技能，但走路不再避開怪群方向。
   avoid_movement_enabled: true
-  keys: ["2","F2", "F3", "F4","F5","F6"]
+  keys: ["2","F1", "F2", "F3", "F4","F5","F6"]
   min_targets: 2
   skill_cooldown_ms: 6000
   skill_interval_ms: 330
   skills:
-    - {key: "2", cooldown_ms: 26000}
+    - {key: "2", cooldown_ms: 2000}
+    - {key: "F1", cooldown_ms: 5000}
     - {key: "F2", cooldown_ms: 6000}
     - {key: "F3", cooldown_ms: 6000}
     - {key: "F4", cooldown_ms: 6000}

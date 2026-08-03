@@ -253,13 +253,14 @@ class MinimapZoomConfig:
 
 
 @dataclass(frozen=True)
-class CombatStateConfig:
+class CombatStartConfig:
     enabled: bool
-    template_path: str
-    threshold: float
-    absence_timeout_ms: int
-    key: str
-    roi: tuple[int, int, int, int]
+    skills: tuple[str, ...]
+    skill_interval_ms: int
+    verify_delay_ms: int
+    status_template_path: str
+    status_threshold: float
+    status_roi: tuple[int, int, int, int] | None
 
 
 @dataclass(frozen=True)
@@ -291,7 +292,7 @@ class AppConfig:
     town_teleport: TownTeleportConfig
     active_map: MapProfileConfig
     minimap_zoom: MinimapZoomConfig
-    combat_state: CombatStateConfig
+    combat_start: CombatStartConfig
     death_recovery: DeathRecoveryConfig
 
 
@@ -543,28 +544,37 @@ def load_config(path: Path) -> AppConfig:
             minimap_zoom.combat_load_wait_ms,
         ) < 0 or minimap_zoom.interval_ms == 0:
             raise ValueError("minimap_zoom settings are invalid")
-        combat_state_raw = raw.get("combat_state", {})
-        combat_state_roi_raw = combat_state_raw.get("roi", [0, 0, 500, 350])
-        if (
-            not isinstance(combat_state_roi_raw, list)
-            or len(combat_state_roi_raw) != 4
-            or any(not isinstance(value, int) for value in combat_state_roi_raw)
-            or combat_state_roi_raw[0] < 0
-            or combat_state_roi_raw[1] < 0
-            or combat_state_roi_raw[2] <= 0
-            or combat_state_roi_raw[3] <= 0
-        ):
-            raise ValueError("combat_state roi must be [left, top, width, height]")
-        combat_state = CombatStateConfig(
-            enabled=bool(combat_state_raw.get("enabled", False)),
-            template_path=str(combat_state_raw.get("template_path", "assets/combat/battle_state.png")),
-            threshold=float(combat_state_raw.get("threshold", 0.85)),
-            absence_timeout_ms=int(combat_state_raw.get("absence_timeout_ms", 10_000)),
-            key=str(combat_state_raw.get("key", "4")),
-            roi=tuple(combat_state_roi_raw),
+        if "combat_state" in raw:
+            raise ValueError("combat_state has been removed; use combat_start instead")
+        combat_start_raw = raw.get("combat_start", {})
+        raw_combat_start_skills = combat_start_raw.get("skills", [])
+        if not isinstance(raw_combat_start_skills, list):
+            raise ValueError("combat_start.skills must be a list")
+        try:
+            combat_start_skills = tuple(str(skill["key"]) for skill in raw_combat_start_skills)
+        except (KeyError, TypeError):
+            raise ValueError("combat_start.skills entries must contain key") from None
+        combat_start = CombatStartConfig(
+            enabled=bool(combat_start_raw.get("enabled", False)),
+            skills=combat_start_skills,
+            skill_interval_ms=int(combat_start_raw.get("skill_interval_ms", 330)),
+            verify_delay_ms=int(combat_start_raw.get("verify_delay_ms", 500)),
+            status_template_path=str(combat_start_raw.get("status_template_path", "assets/combat/combat_state_icon.png")),
+            status_threshold=float(combat_start_raw.get("status_threshold", 0.85)),
+            status_roi=tuple(combat_start_raw["status_roi"]) if combat_start_raw.get("status_roi") else None,
         )
-        if not 0 <= combat_state.threshold <= 1 or combat_state.absence_timeout_ms <= 0 or not combat_state.key:
-            raise ValueError("combat_state settings are invalid")
+        if (
+            combat_start.skill_interval_ms < 0
+            or combat_start.verify_delay_ms <= 0
+            or not 0 <= combat_start.status_threshold <= 1
+            or any(not key for key in combat_start.skills)
+            or not combat_start.status_template_path
+            or (
+                combat_start.status_roi is not None
+                and (len(combat_start.status_roi) != 4 or any(not isinstance(value, int) for value in combat_start.status_roi))
+            )
+        ):
+            raise ValueError("combat_start settings are invalid")
         death_raw = raw.get("death_recovery", {})
         death_threshold = float(death_raw.get("threshold", 0.82))
         if not 0 <= death_threshold <= 1:
@@ -619,7 +629,7 @@ def load_config(path: Path) -> AppConfig:
             town_teleport=town_teleport,
             active_map=active_map,
             minimap_zoom=minimap_zoom,
-            combat_state=combat_state,
+            combat_start=combat_start,
             death_recovery=death_recovery,
         )
     except (KeyError, TypeError, ValueError) as error:
