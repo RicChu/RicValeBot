@@ -598,7 +598,12 @@ class AutomationApp:
                 and self.combat.should_avoid_crowd(len(targets))
                 and not route_playback_active
             )
-            if scripted_route and scripted_route.active:
+            if target and not avoid_crowd and not route_playback_active:
+                # Do not let a previously scheduled random movement carry the
+                # player away from (or blindly into) a detected target.
+                if not self.config.action.dry_run:
+                    self.movement_input.set_movement(window.hwnd, ())
+            elif scripted_route and scripted_route.active:
                 self._scripted_route_step(window, now)
             elif self.walker and now >= self.next_walk_at:
                 excluded_keys = directions_toward_target(target, frame.shape[1], frame.shape[0]) if avoid_crowd else ()

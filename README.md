@@ -337,6 +337,22 @@ combat_start:
     - key: "F2"
 ```
 
+## 授權共享記憶體示範
+
+這是畢業專題的獨立示範，不會讀取遊戲或第三方程序。先在一個 PowerShell 視窗執行：
+
+```powershell
+.\.venv\Scripts\python.exe tools\memory_demo_target.py
+```
+
+再於另一個視窗執行：
+
+```powershell
+.\.venv\Scripts\python.exe tools\memory_demo_reader.py
+```
+
+讀取器每 20ms 讀取由示範目標程式建立的共享記憶體，輸出最近存活目標與半徑 100 內的群怪數量。按 Ctrl+C 可停止任一程式。
+
 ## 死亡回復
 
 死亡回復與登入回復是獨立狀態。只要辨識到「在城鎮重生」按鈕，死亡回復就會取消正在進行的登入與傳送步驟、釋放 WASD、清空技能，再點擊一次重生。死亡視窗還在時不會重複點擊；視窗消失後，程式才重新依目前位置決定是否需要主城傳送。

@@ -18,8 +18,8 @@ maps:
     movement_script_path: null
     arrival_minimap_template_path: null
   night_garden:
-    movement_script_path: null
-    arrival_minimap_template_path: null
+    arrival_minimap_threshold: 0.70
+    route_start_delay_ms: 1000
   the_forge:
     arrival_minimap_threshold: 0.70
     # Detect the arrival minimap first, then wait this long before replaying WASD.
@@ -201,8 +201,8 @@ walking:
   mode: scripted_route
   step_distance: 50
   speed_px_per_sec: 100
-  boundary_x: 9999  # 左右各最多 60 px
-  boundary_y: 9999   # 上下各最多 40 px
+  boundary_x: 800  # 左右各最多 60 px
+  boundary_y: 800   # 上下各最多 40 px
   route:
     # 以遊戲視窗右上角為基準；不同解析度仍會自動靠右。
     minimap: {right_px: 20, top_px: 20, width_px: 340, height_px: 360}
@@ -224,7 +224,6 @@ skill_queue:
   enabled: true
   queue_interval_ms: 330
   schedules:
-    - {key: "2", interval_seconds: 5}
     - {key: "6", interval_seconds: 45}
     - {key: "5", interval_seconds: 20}
     - {key: "6", interval_seconds: 20}
