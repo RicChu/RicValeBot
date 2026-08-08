@@ -1,8 +1,9 @@
 import json
 import math
+import socket
 import unittest
 
-from src.screen_automation.game_state import decode_game_state, nearest_living_monster
+from src.screen_automation.game_state import decode_game_state, nearest_living_monster, receive_game_state
 
 
 def valid_snapshot_payload() -> dict:
@@ -95,6 +96,21 @@ class GameStateSnapshotTests(unittest.TestCase):
 
         self.assertIsNotNone(target)
         self.assertEqual(target.runtime_id, "near")
+
+    def test_udp_receiver_skips_malformed_datagram(self) -> None:
+        receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.addCleanup(receiver.close)
+        self.addCleanup(sender.close)
+        receiver.bind(("127.0.0.1", 0))
+        receiver.settimeout(1.0)
+        destination = receiver.getsockname()
+        sender.sendto(b"not-json", destination)
+        sender.sendto(encode(valid_snapshot_payload()), destination)
+
+        snapshot = receive_game_state(receiver)
+
+        self.assertEqual(snapshot.sequence, 42)
 
 
 if __name__ == "__main__":

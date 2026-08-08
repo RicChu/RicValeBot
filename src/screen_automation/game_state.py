@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import socket
 from dataclasses import dataclass
 from typing import Any
 
@@ -173,3 +174,13 @@ def nearest_living_monster(snapshot: GameStateSnapshot) -> MonsterSnapshot | Non
         key=lambda monster: math.hypot(monster.position.x - player.x, monster.position.z - player.z),
         default=None,
     )
+
+
+def receive_game_state(sock: socket.socket) -> GameStateSnapshot:
+    """Return the next valid snapshot, skipping malformed UDP datagrams."""
+    while True:
+        payload, _source = sock.recvfrom(65_535)
+        try:
+            return decode_game_state(payload)
+        except (KeyError, TypeError, UnicodeDecodeError, ValueError):
+            continue
