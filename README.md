@@ -363,3 +363,63 @@ death_recovery:
   threshold: 0.82
   town_respawn_template_path: assets/death/town_respawn.png
 ```
+
+## SpiritVale Game State Bridge（實驗性唯讀資料）
+
+`feature/game-state-bridge` 新增獨立 BepInEx IL2CPP 外掛，直接讀取客戶端已持有的目前地圖、玩家世界座標、已生成怪物、背包分類數量與目前裝備。第一階段只把完整 JSON 快照傳送到 `127.0.0.1:48231`，不會把資料交給滑鼠、鍵盤、走路或技能系統。
+
+### 一次性準備 .NET SDK
+
+本機只有 .NET Runtime 時，可使用 Microsoft 官方安裝器建立專案本地 SDK：
+
+```powershell
+Invoke-WebRequest https://dot.net/v1/dotnet-install.ps1 -OutFile tools\dotnet-install.ps1
+powershell -ExecutionPolicy Bypass -File tools\dotnet-install.ps1 -Channel 8.0 -InstallDir .dotnet -NoPath
+```
+
+`.dotnet/` 與下載的安裝器已加入 `.gitignore`，不會提交到 repository。
+
+### 建置與安裝
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build_game_state_bridge.ps1
+powershell -ExecutionPolicy Bypass -File tools\install_game_state_bridge.ps1
+```
+
+若 SpiritVale 不在預設 Steam 位置，兩個腳本都可加上：
+
+```powershell
+-GameDir "D:\SteamLibrary\steamapps\common\SpiritVale"
+```
+
+安裝腳本只會建立 `BepInEx\plugins\SpiritValeGameStateBridge`，並複製 `SpiritValeGameStateBridge.dll`；不會覆蓋其他外掛。若 Program Files 拒絕寫入，請使用系統管理員 PowerShell 執行安裝腳本。
+
+### 啟動診斷接收器
+
+先執行：
+
+```powershell
+.\.venv\Scripts\python.exe tools\game_state_listener.py
+```
+
+再啟動 SpiritVale。BepInEx 應顯示三個 patch 已安裝，接收器會輸出類似：
+
+```text
+seq=42 map=stormreef_isle player=(10.0,2.0,20.0) monsters=3 nearest=scrapfang inventory=equips:12,artifacts:3
+```
+
+外掛第一次啟動後的設定檔位於：
+
+```text
+SpiritVale\BepInEx\config\local.spiritvale.gamestatebridge.cfg
+```
+
+可調整 `Enabled`、`Port`、`SnapshotIntervalMs`、`InventoryIntervalMs` 與 `DiagnosticLogging`。`Host` 只接受 loopback IP，避免資料送出本機。
+
+解除安裝時只刪除：
+
+```text
+SpiritVale\BepInEx\plugins\SpiritValeGameStateBridge
+```
+
+這個階段不讀固定記憶體位址、不使用 `ReadProcessMemory`、不攔截或送出 FishNet 遊戲封包，也不修改任何遊戲物件。實際資料是否符合畫面仍須登入遊戲進行人工驗收。
