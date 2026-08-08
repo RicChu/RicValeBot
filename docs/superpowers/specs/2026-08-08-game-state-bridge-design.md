@@ -1,6 +1,6 @@
 # SpiritVale Game State Bridge 設計
 
-日期：2026-08-08  
+日期：2026-08-08
 分支：`feature/game-state-bridge`
 
 ## 目標
