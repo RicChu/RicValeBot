@@ -12,7 +12,8 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 from screen_automation.app import AutomationApp, existing_template_paths
 from screen_automation.combat import CombatController, CrowdSkillGroup, PrioritySkillGroup
 from screen_automation.combat_start import CombatStartSkillGroup
-from screen_automation.config import CenterROIConfig, SkillConfig
+from screen_automation.config import CenterROIConfig, SkillConfig, load_config
+from screen_automation.game_state import decode_game_state
 from screen_automation.detector import DetectionResult
 from screen_automation.death_recovery import DeathAction
 from screen_automation.disconnect_recovery import DisconnectAction
@@ -20,6 +21,7 @@ from screen_automation.login_recovery import LoginAction
 from screen_automation.map_arrival_wait import MapArrivalWaitController
 from screen_automation.town_teleport import TeleportAction
 from screen_automation.window import WindowInfo
+from tests.test_game_state import encode, valid_snapshot_payload
 
 
 def make_app(result: DetectionResult | None) -> AutomationApp:
@@ -34,6 +36,16 @@ def make_app(result: DetectionResult | None) -> AutomationApp:
         crowd_combat=SimpleNamespace(enabled=True, keys=("F2", "F3", "F4"), min_targets=3, skill_cooldown_ms=6000, skill_interval_ms=330, movement_resume_delay_ms=1000),
         walking=SimpleNamespace(speed_px_per_sec=400),
         active_map=SimpleNamespace(name="the_forge"),
+        targeting=SimpleNamespace(
+            mode="screen",
+            game_state=SimpleNamespace(
+                host="127.0.0.1",
+                port=48231,
+                stale_after_ms=500,
+                distance_band=SimpleNamespace(near=3.0, far=7.0),
+                crowd_radius=10.0,
+            ),
+        ),
     )
     app.detector = SimpleNamespace(detect=lambda _: result)
     app.map_target_detector = None
@@ -51,6 +63,12 @@ def make_app(result: DetectionResult | None) -> AutomationApp:
     app.next_walk_at = 0.0
     app.hsv_detector = None
     app.combat = CombatController(CrowdSkillGroup(("F2", "F3", "F4"), 3, 6.0, 0.33))
+    app.game_state_source = None
+    app._game_state_fresh = None
+    app._game_state_target_id = None
+    app._game_state_band = None
+    app._game_state_crowd_avoidance = None
+    app._game_state_movement_active = False
     app.movement_input = SimpleNamespace(
         set_movement=lambda *_: None,
         release=lambda *_: None,
@@ -95,14 +113,116 @@ class AppLoggingTests(unittest.TestCase):
         app = make_app(None)
         app.config.action.dry_run = False
         app.task_one_skill_group = PrioritySkillGroup((("3", 1.0),), 0.02)
-        window = WindowInfo(hwnd=7, title="Target", left=0, top=0, width=100, height=100)
-        target = DetectionResult(score=0.95, left=40, top=50, width=20, height=10)
-
-        with patch("screen_automation.app.move_cursor_to_image") as move:
-            app._handle_task_one(window, target, (50, 40), 0.0)
-            app._handle_task_one(window, target, (50, 40), 0.1)
+        with patch("screen_automation.app.move_cursor_to_screen_position") as move:
+            app._handle_task_one((50, 40), 0.0)
+            app._handle_task_one((50, 40), 0.1)
 
         self.assertEqual(move.call_count, 2)
+
+    def test_game_state_mode_does_not_construct_screen_combat_detectors(self) -> None:
+        root = Path(__file__).parents[1]
+        config = load_config(root / "config.yaml")
+
+        app = AutomationApp(config, root)
+        self.addCleanup(app.stop)
+
+        self.assertIsNone(app.detector)
+        self.assertIsNone(app.negative_detector)
+        self.assertIsNone(app.map_target_detector)
+        self.assertIsNone(app.hsv_detector)
+        self.assertIsNotNone(app.game_state_source)
+
+    def test_game_state_target_moves_cursor_attacks_and_uses_far_distance_guidance(self) -> None:
+        app = make_app(None)
+        app.config.action.dry_run = False
+        app.config.targeting.mode = "game_state"
+        payload = valid_snapshot_payload()
+        payload["monsters"] = [payload["monsters"][0] | {
+            "x": 20.0,
+            "z": 20.0,
+            "viewport_x": 0.75,
+            "viewport_y": 0.25,
+            "viewport_depth": 10.0,
+            "view_x": 8.0,
+            "view_z": 4.0,
+        }]
+        app.game_state_source = SimpleNamespace(latest=lambda: decode_game_state(encode(payload)))
+        app._game_state_fresh = None
+        app._game_state_target_id = None
+        app._game_state_band = None
+        app._game_state_crowd_avoidance = None
+        app._game_state_movement_active = False
+        movements: list[tuple[str, ...]] = []
+        skills: list[str] = []
+        app.movement_input = SimpleNamespace(set_movement=lambda _, keys: movements.append(keys), release=lambda *_: None)
+        app.skill_input = SimpleNamespace(queue_tap=lambda key, **_: skills.append(key), process=lambda *_: None, clear=lambda: None)
+        window = WindowInfo(hwnd=1, title="Target", left=100, top=50, width=1000, height=600)
+        frame = np.zeros((600, 1000, 3), dtype=np.uint8)
+
+        with patch("screen_automation.app.move_cursor_to_screen_position") as move:
+            app._process_game_state_combat(window, frame, now=0.0)
+
+        move.assert_called_once_with((850, 480))
+        self.assertIn("3", skills)
+        self.assertEqual(movements, [("W", "D")])
+
+    def test_stale_game_state_releases_only_game_state_movement(self) -> None:
+        app = make_app(None)
+        app.config.action.dry_run = False
+        app.game_state_source = SimpleNamespace(latest=lambda: None)
+        app._game_state_fresh = True
+        app._game_state_movement_active = True
+        movements: list[tuple[str, ...]] = []
+        app.movement_input = SimpleNamespace(set_movement=lambda _, keys: movements.append(keys), release=lambda *_: None)
+        window = WindowInfo(hwnd=1, title="Target", left=0, top=0, width=100, height=100)
+
+        app._process_game_state_combat(window, np.zeros((100, 100, 3), dtype=np.uint8), now=1.0)
+
+        self.assertEqual(movements, [()])
+        self.assertFalse(app._game_state_movement_active)
+
+    def test_game_state_target_runs_task_one_and_center_skills_independently(self) -> None:
+        app = make_app(None)
+        app.config.action.dry_run = False
+        app.config.center_target.enabled = True
+        payload = valid_snapshot_payload()
+        payload["monsters"] = [payload["monsters"][0] | {
+            "viewport_x": 0.5,
+            "viewport_y": 0.5,
+            "viewport_depth": 5.0,
+        }]
+        app.game_state_source = SimpleNamespace(latest=lambda: decode_game_state(encode(payload)))
+        skills: list[str] = []
+        app.skill_input = SimpleNamespace(queue_tap=lambda key, **_: skills.append(key), process=lambda *_: None, clear=lambda: None)
+        window = WindowInfo(hwnd=1, title="Target", left=0, top=0, width=1000, height=600)
+
+        with patch("screen_automation.app.move_cursor_to_screen_position"):
+            app._process_game_state_combat(window, np.zeros((600, 1000, 3), dtype=np.uint8), now=0.0)
+
+        self.assertCountEqual(skills, ["2", "3"])
+
+    def test_game_state_mode_never_calls_screen_target_detection(self) -> None:
+        app = make_app(None)
+        app.config.targeting.mode = "game_state"
+        started: list[bool] = []
+        app.game_state_source = SimpleNamespace(start=lambda: started.append(True), latest=lambda: None)
+        window = WindowInfo(hwnd=1, title="Target", left=0, top=0, width=100, height=100)
+
+        with (
+            patch("screen_automation.app.find_window", return_value=window),
+            patch.object(app, "_detect_targets", side_effect=AssertionError("screen fallback used")),
+        ):
+            app.run(once=True)
+
+        self.assertEqual(started, [True])
+
+    def test_game_state_port_conflict_has_actionable_error(self) -> None:
+        app = make_app(None)
+        app.config.targeting.mode = "game_state"
+        app.game_state_source = SimpleNamespace(start=lambda: (_ for _ in ()).throw(OSError("in use")))
+
+        with self.assertRaisesRegex(RuntimeError, "game_state_listener.py"):
+            app.run(once=True)
 
     def test_teleport_departure_waits_for_arrival_minimap_before_scripted_route(self) -> None:
         app = make_app(None)
@@ -311,7 +431,7 @@ class AppLoggingTests(unittest.TestCase):
         with (
             patch("screen_automation.app.find_window", return_value=window),
             patch("screen_automation.app.win32api.GetSystemMetrics", side_effect=[1920, 1080]),
-            patch("screen_automation.app.move_cursor_to_image") as move_cursor,
+            patch("screen_automation.app.move_cursor_to_screen_position") as move_cursor,
         ):
             app.run(once=True)
 
@@ -332,7 +452,7 @@ class AppLoggingTests(unittest.TestCase):
         )
         window = WindowInfo(hwnd=1, title="Target", left=100, top=50, width=500, height=400)
 
-        with patch("screen_automation.app.find_window", return_value=window), patch("screen_automation.app.move_cursor_to_image"):
+        with patch("screen_automation.app.find_window", return_value=window), patch("screen_automation.app.move_cursor_to_screen_position"):
             app.run(once=True)
 
         self.assertIn("2", pressed)
@@ -375,14 +495,14 @@ class AppLoggingTests(unittest.TestCase):
         )
         window = WindowInfo(hwnd=1, title="Target", left=0, top=0, width=100, height=100)
 
-        with patch("screen_automation.app.find_window", return_value=window), patch("screen_automation.app.move_cursor_to_image") as move_cursor, patch("screen_automation.app.logging.info") as info:
+        with patch("screen_automation.app.find_window", return_value=window), patch("screen_automation.app.move_cursor_to_screen_position") as move_cursor, patch("screen_automation.app.logging.info") as info:
             app.run(once=True)
 
         self.assertEqual(movements[-1], ("A",))
         self.assertEqual(excluded, [("D", "W")])
         self.assertIn("F2", pressed)
         self.assertIn("3", pressed)
-        self.assertEqual(move_cursor.call_args.args[1].left, 35)
+        self.assertEqual(move_cursor.call_args.args[0], (75, 22))
         self.assertTrue(any("Crowd skill action" in str(call) for call in info.call_args_list))
         self.assertTrue(any("Crowd avoidance" in str(call) for call in info.call_args_list))
 
@@ -404,7 +524,7 @@ class AppLoggingTests(unittest.TestCase):
         app.skill_input = SimpleNamespace(queue_tap=lambda key, **_: skills.append(key), process=lambda *_: None, clear=lambda: None)
         window = WindowInfo(hwnd=1, title="Target", left=0, top=0, width=100, height=100)
 
-        with patch("screen_automation.app.find_window", return_value=window), patch("screen_automation.app.move_cursor_to_image"):
+        with patch("screen_automation.app.find_window", return_value=window), patch("screen_automation.app.move_cursor_to_screen_position"):
             app.run(once=True)
 
         self.assertEqual(movements, [("A",)])
@@ -430,7 +550,7 @@ class AppLoggingTests(unittest.TestCase):
         app.skill_input = SimpleNamespace(queue_tap=lambda key, **_: skills.append(key), process=lambda *_: None, clear=lambda: None)
         window = WindowInfo(hwnd=1, title="Target", left=0, top=0, width=100, height=100)
 
-        with patch("screen_automation.app.find_window", return_value=window), patch("screen_automation.app.move_cursor_to_image"):
+        with patch("screen_automation.app.find_window", return_value=window), patch("screen_automation.app.move_cursor_to_screen_position"):
             app.run(once=True)
 
         self.assertEqual(excluded, [])

@@ -30,8 +30,9 @@ def main() -> None:
     try:
         app.run(once=args.once)
     except KeyboardInterrupt:
-        app.stop()
         logging.info("已停止；WASD 按鍵已釋放")
+    finally:
+        app.stop()
 
 
 if __name__ == "__main__":

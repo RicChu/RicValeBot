@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from math import hypot
 from pathlib import Path
 
 import cv2
@@ -16,6 +17,8 @@ from .config import AppConfig
 from .death_recovery import DeathAction, DeathRecoveryController
 from .detector import DetectionResult, MultiTemplateDetector, TemplateDetector
 from .disconnect_recovery import DisconnectAction, DisconnectRecoveryController
+from .game_state_source import GameStateSource
+from .game_state_targeting import decide_game_state
 from .hsv_bar import HSVBarDetector
 from .input_coordinator import MovementInput, SkillTapQueue
 from .keyboard import post_key
@@ -24,7 +27,7 @@ from .map_arrival_wait import MapArrivalWaitController
 from .map_localization import MapLocalizer
 from .minimap_zoom import MinimapZoomController
 from .navigation import RouteNavigator, Waypoint, find_white_pair, minimap_bounds
-from .pointer import click_screen_position, ctrl_wheel_at, double_click_screen_position, image_hover_position, move_cursor_to_image
+from .pointer import click_screen_position, ctrl_wheel_at, double_click_screen_position, image_hover_position, move_cursor_to_screen_position
 from .roi import center_roi_bounds, translate_detection
 from .scripted_route import ScriptedRouteController, load_movement_script
 from .skill_queue import SkillScheduler
@@ -49,13 +52,14 @@ class AutomationApp:
         self.config = config
         self.base_dir = base_dir
         self.desktop_capture = ReusableMSSCapture()
+        screen_targeting = config.targeting.mode == "screen"
         self.detector = (
             MultiTemplateDetector(tuple(base_dir / path for path in config.detection.template_paths), config.detection.threshold, config.detection.roi)
-            if config.detection.template_paths else None
+            if screen_targeting and config.detection.template_paths else None
         )
         self.negative_detector = (
             MultiTemplateDetector(tuple(base_dir / path for path in config.detection.negative_template_paths), config.detection.threshold, config.detection.roi)
-            if config.detection.negative_template_paths else None
+            if screen_targeting and config.detection.negative_template_paths else None
         )
         map_target_paths = existing_template_paths(base_dir, config.active_map.target_template_paths)
         self.map_target_detector = (
@@ -64,7 +68,7 @@ class AutomationApp:
                 config.detection.threshold,
                 config.detection.roi,
             )
-            if map_target_paths
+            if screen_targeting and map_target_paths
             else None
         )
         self.hsv_detector = (
@@ -88,9 +92,23 @@ class AutomationApp:
                 black_residual_min_outer_contrast=config.hsv_bar.black_residual.min_outer_contrast,
                 black_residual_low_colour_trigger_ratio=config.hsv_bar.black_residual.low_colour_trigger_ratio,
             )
-            if config.hsv_bar.enabled
+            if screen_targeting and config.hsv_bar.enabled
             else None
         )
+        self.game_state_source = (
+            GameStateSource(
+                config.targeting.game_state.host,
+                config.targeting.game_state.port,
+                config.targeting.game_state.stale_after_ms,
+            )
+            if config.targeting.mode == "game_state"
+            else None
+        )
+        self._game_state_fresh: bool | None = None
+        self._game_state_target_id: str | None = None
+        self._game_state_band: str | None = None
+        self._game_state_crowd_avoidance: bool | None = None
+        self._game_state_movement_active = False
         self.last_action_at = float("-inf")
         self.last_center_action_at = float("-inf")
         self.was_detected = False
@@ -210,6 +228,8 @@ class AutomationApp:
         if self.current_hwnd and not self.config.action.dry_run:
             self.movement_input.release(self.current_hwnd)
         self.skill_input.clear()
+        if self.game_state_source:
+            self.game_state_source.stop()
         self.desktop_capture.close()
 
     def _sleep_until_next_poll(self, started_at: float) -> None:
@@ -251,12 +271,12 @@ class AutomationApp:
         self.was_center_detected = True
         self.was_task_action_logged = False
 
-    def _handle_task_one(self, window: WindowInfo, detection: DetectionResult, cursor_position: tuple[int, int], now: float) -> None:
+    def _handle_task_one(self, cursor_position: tuple[int, int], now: float) -> None:
         self.was_center_detected = False
         # Pointer tracking is intentionally independent from skill cooldowns.
         # The bar can move before Task 1 is ready to emit its next key.
         if not self.config.action.dry_run:
-            move_cursor_to_image(window, detection, self.config.pointer.offset_y)
+            move_cursor_to_screen_position(cursor_position)
         key = self.task_one_skill_group.next_skill(now)
         if key is None:
             return
@@ -485,7 +505,153 @@ class AutomationApp:
             return (translate_detection(template_detection, roi_left, roi_top),)
         return ()
 
+    def _advance_background_movement(self, window: WindowInfo, frame: np.ndarray, now: float) -> None:
+        scripted_route = getattr(self, "scripted_route", None)
+        if scripted_route and scripted_route.active:
+            self._scripted_route_step(window, now)
+            return
+        if self.walker and now >= self.next_walk_at:
+            keys, distance = self.walker.next_step()
+            if not self.config.action.dry_run:
+                self.movement_input.set_movement(window.hwnd, keys)
+            self.next_walk_at = now + distance / self.config.walking.speed_px_per_sec
+            return
+        if not self.navigator:
+            return
+        route = self.config.walking.route
+        map_left, map_top, map_width, map_height = minimap_bounds(
+            frame.shape[1],
+            frame.shape[0],
+            route.minimap.right_px,
+            route.minimap.top_px,
+            route.minimap.width_px,
+            route.minimap.height_px,
+        )
+        minimap = frame[map_top:map_top + map_height, map_left:map_left + map_width]
+        marker_position = find_white_pair(minimap, route.white_threshold, route.pair_max_distance_px)
+        player_position = self._route_player_position(minimap, marker_position)
+        if player_position:
+            route_target = self.navigator.update_target(player_position)
+            if route_target.name != self.route_target_name:
+                logging.info(
+                    "Route target=%s; player=%s; map target=(%s, %s)",
+                    route_target.name,
+                    player_position,
+                    route_target.x,
+                    route_target.y,
+                )
+                self.route_target_name = route_target.name
+            if not self.config.action.dry_run:
+                self.movement_input.set_movement(window.hwnd, self.navigator.movement_keys(player_position))
+        elif not self.config.action.dry_run:
+            self.movement_input.set_movement(window.hwnd, ())
+
+    def _process_game_state_combat(self, window: WindowInfo, frame: np.ndarray, now: float) -> None:
+        source = self.game_state_source
+        if source is None:
+            raise RuntimeError("game_state targeting requires a GameStateSource")
+        snapshot = source.latest()
+        scripted_route = getattr(self, "scripted_route", None)
+        route_playback_active = bool(scripted_route and scripted_route.active)
+        if snapshot is None:
+            if self._game_state_fresh is not False:
+                logging.info("Game state stale; target guidance released")
+            self._game_state_fresh = False
+            self._game_state_target_id = None
+            self._game_state_band = None
+            self._game_state_crowd_avoidance = None
+            self.was_detected = False
+            self.was_task_action_logged = False
+            self.was_center_detected = False
+            if route_playback_active:
+                self._game_state_movement_active = False
+                self._scripted_route_step(window, now)
+            elif self._game_state_movement_active:
+                if not self.config.action.dry_run:
+                    self.movement_input.set_movement(window.hwnd, ())
+                self._game_state_movement_active = False
+            else:
+                self._advance_background_movement(window, frame, now)
+            return
+
+        if self._game_state_fresh is not True:
+            logging.info("Game state fresh; sequence=%s; map=%s", snapshot.sequence, snapshot.map_id)
+        self._game_state_fresh = True
+        game_state = self.config.targeting.game_state
+        decision = decide_game_state(
+            snapshot,
+            client_width=window.width,
+            client_height=window.height,
+            near_distance=game_state.distance_band.near,
+            far_distance=game_state.distance_band.far,
+            crowd_radius=game_state.crowd_radius,
+            crowd_min_targets=self.config.crowd_combat.min_targets,
+            avoid_crowd=bool(
+                self.combat and getattr(self.config.crowd_combat, "avoid_movement_enabled", True)
+            ),
+        )
+
+        target_id = decision.target.runtime_id if decision.target else None
+        if target_id != self._game_state_target_id:
+            logging.info(
+                "Runtime target=%s; distance=%s; client=%s",
+                target_id,
+                None if decision.target_distance is None else round(decision.target_distance, 2),
+                decision.target_client_position,
+            )
+            self._game_state_target_id = target_id
+        if decision.band != self._game_state_band:
+            logging.info("Distance band=%s; movement=%s", decision.band, decision.movement_keys)
+            self._game_state_band = decision.band
+        if decision.crowd_avoidance != self._game_state_crowd_avoidance:
+            logging.info(
+                "Crowd avoidance=%s; targets=%s; radius=%.1f",
+                decision.crowd_avoidance,
+                decision.crowd_count,
+                game_state.crowd_radius,
+            )
+            self._game_state_crowd_avoidance = decision.crowd_avoidance
+
+        if decision.target and decision.target_client_position:
+            client_x, client_y = decision.target_client_position
+            image_position = (window.left + client_x, window.top + client_y)
+            cursor_position = (image_position[0], image_position[1] + self.config.pointer.offset_y)
+            self.was_detected = True
+            self._handle_task_one(cursor_position, now)
+            if self.config.center_target.enabled and hypot(
+                client_x - window.width / 2,
+                client_y - window.height / 2,
+            ) <= self.config.center_target.radius_px:
+                self._handle_center_target(now, image_position)
+        else:
+            self.was_detected = False
+            self.was_task_action_logged = False
+            self.was_center_detected = False
+
+        crowd_key = self.combat.observe(now, decision.crowd_count) if self.combat else None
+        if crowd_key and not self.config.action.dry_run:
+            self.skill_input.queue_tap(crowd_key)
+            logging.info("Crowd skill action; targets=%s; key=%s", decision.crowd_count, crowd_key)
+
+        if route_playback_active:
+            self._game_state_movement_active = False
+            self._scripted_route_step(window, now)
+        elif decision.target:
+            if not self.config.action.dry_run:
+                self.movement_input.set_movement(window.hwnd, decision.movement_keys)
+            self._game_state_movement_active = bool(decision.movement_keys)
+        else:
+            self._game_state_movement_active = False
+            self._advance_background_movement(window, frame, now)
+
     def run(self, once: bool = False) -> None:
+        if self.game_state_source:
+            try:
+                self.game_state_source.start()
+            except OSError as error:
+                raise RuntimeError(
+                    "無法啟動 game_state UDP 接收；請先關閉 tools/game_state_listener.py 或其他占用連接埠的程式"
+                ) from error
         while True:
             detection_started_at = time.monotonic()
             window = find_window(self.config.target_window_title)
@@ -560,6 +726,42 @@ class AutomationApp:
                         return
                     self._sleep_until_next_poll(detection_started_at)
                     continue
+            if self.config.targeting.mode == "game_state":
+                now = time.monotonic()
+                self._handle_combat_start(frame, now)
+                self._process_game_state_combat(window, frame, now)
+                if not self.config.action.dry_run:
+                    self.skill_input.process(window.hwnd, now)
+                if self.scheduler:
+                    self.scheduler.tick(now)
+                    if key := self.scheduler.pop_ready(now):
+                        if not self.config.action.dry_run:
+                            self.skill_input.queue_tap(key)
+                if not self.config.action.dry_run:
+                    self.skill_input.process(window.hwnd, now)
+                detected_at = time.monotonic()
+                if monitor := getattr(self, "timing_monitor", None):
+                    if report := monitor.record(
+                        detection_started_at,
+                        capture_ms=(captured_at - detection_started_at) * 1000,
+                        detection_ms=(detected_at - captured_at) * 1000,
+                        action_ms=0.0,
+                    ):
+                        logging.debug(
+                            "Detection timing; target=%sms; samples=%s; mean=%.1fms; max=%.1fms; over_target=%s; capture=%.1fms; detect=%.1fms; action=%.1fms",
+                            monitor.target_interval_ms,
+                            report.sample_count,
+                            report.mean_interval_ms,
+                            report.max_interval_ms,
+                            report.over_target_count,
+                            report.mean_capture_ms,
+                            report.mean_detection_ms,
+                            report.mean_action_ms,
+                        )
+                if once:
+                    return
+                self._sleep_until_next_poll(detection_started_at)
+                continue
             targets = self._detect_targets(frame)
             detected_at = time.monotonic()
             now = detected_at
@@ -572,7 +774,7 @@ class AutomationApp:
                 image_position = (window.left + target.left + target.width // 2, window.top + target.top + target.height // 2)
                 cursor_position = image_hover_position(window, target, self.config.pointer.offset_y)
                 self.was_detected = True
-                self._handle_task_one(window, target, cursor_position, now)
+                self._handle_task_one(cursor_position, now)
                 if self._is_center_hsv_target(window, target):
                     self._handle_center_target(now, image_position)
                 if self.config.runtime.save_debug_frame:
