@@ -64,9 +64,30 @@ maps:
             config = load_config(path)
 
         self.assertEqual(config.active_map.teleport_template_path, "assets/maps/goblin_warcamp/teleport.png")
-        self.assertEqual(config.active_map.target_template_paths, ("assets/maps/goblin_warcamp/targets",))
+        self.assertEqual(config.active_map.target_template_paths, ("assets/maps/goblin_warcamp/target",))
         self.assertEqual(config.active_map.movement_script_path, "assets/maps/goblin_warcamp/movement.yaml")
         self.assertEqual(config.active_map.arrival_minimap_template_path, "assets/maps/goblin_warcamp/arrival_minimap.png")
+
+    def test_empty_target_template_paths_uses_map_target_directory(self) -> None:
+        content = """
+target_window_title: Target
+capture: {method: mss, fallback_to_desktop: true}
+detection: {template_paths: [], negative_template_paths: [], threshold: 0.5, roi: null}
+action: {key: '3', dry_run: true, key_hold_ms: 0, repeat_interval_ms: 20}
+pointer: {offset_y: -50}
+center_target: {template_paths: [], radius_px: 250, key: '2', key_hold_ms: 0, repeat_interval_ms: 500}
+runtime: {poll_interval_ms: 20, save_debug_frame: false, debug_frame_path: debug/latest_detection.png}
+active_map: fairly_glen
+maps:
+  fairly_glen:
+    target_template_paths: []
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.yaml"
+            path.write_text(content, encoding="utf-8")
+            config = load_config(path)
+
+        self.assertEqual(config.active_map.target_template_paths, ("assets/maps/fairly_glen/target",))
 
     def test_rejects_unknown_active_map(self) -> None:
         content = """

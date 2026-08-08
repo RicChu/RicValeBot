@@ -1,0 +1,12 @@
+version: 1
+segments:
+- keys:
+  - A
+  duration_ms: 20
+- keys:
+  - A
+  - S
+  duration_ms: 2991
+- keys:
+  - A
+  duration_ms: 2034

@@ -491,9 +491,9 @@ def load_config(path: Path) -> AppConfig:
             teleport_template_path = active_map_raw.get(
                 "teleport_template_path", f"{default_map_dir}/teleport.png"
             )
-            target_template_paths = active_map_raw.get(
-                "target_template_paths", [f"{default_map_dir}/targets"]
-            )
+            target_template_paths = active_map_raw.get("target_template_paths") or [
+                f"{default_map_dir}/target"
+            ]
             movement_script_path = active_map_raw.get(
                 "movement_script_path", f"{default_map_dir}/movement.yaml"
             )

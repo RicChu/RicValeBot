@@ -9,17 +9,12 @@ capture:
 
 # Change only active_map to switch teleport destination, lock-target templates,
 # and the WASD movement script for a combat map. HSV health-bar detection stays global.
-active_map: stormreef_isle
+active_map: goblin_warcamp
 
 maps:
-  sunny_meadows2:
-    # Target images default to assets/maps/<map name>/target/*.
-    arrival_minimap_threshold: 0.70
-    route_start_delay_ms: 1000
-  fairly_glen:
-    arrival_minimap_threshold: 0.70
-    route_start_delay_ms: 1000
   demon_mouth:
+    # Omitted resource paths use assets/maps/demon_mouth/<default filename>.
+    target_template_paths: []
     movement_script_path: null
     arrival_minimap_template_path: null
   night_garden:
@@ -36,9 +31,6 @@ maps:
     arrival_minimap_threshold: 0.70
     route_start_delay_ms: 1000
   sunken_depths:
-    arrival_minimap_threshold: 0.70
-    route_start_delay_ms: 1000
-  stormreef_isle:
     arrival_minimap_threshold: 0.70
     route_start_delay_ms: 1000
 
@@ -190,12 +182,17 @@ crowd_combat:
   enabled: true
   # false 時仍施放群怪技能，但走路不再避開怪群方向。
   avoid_movement_enabled: true
-  keys: ["3"]
+  keys: ["2","F1", "F2", "F3", "F4","F5","F6"]
   min_targets: 2
   skill_cooldown_ms: 6000
   skill_interval_ms: 330
   skills:
-    - {key: "3", cooldown_ms: 1000}
+    - {key: "2", cooldown_ms: 2000}
+    - {key: "F1", cooldown_ms: 5000}
+    - {key: "F2", cooldown_ms: 6000}
+    - {key: "F3", cooldown_ms: 6000}
+    - {key: "F4", cooldown_ms: 2000}
+    - {key: "R", cooldown_ms: 5000}
 
 walking:
   enabled: true
@@ -203,7 +200,7 @@ walking:
   # - random：保留原本安全範圍內的隨機走路，使用 step_distance、speed_px_per_sec、boundary_x、boundary_y。
   # - route：依 route.waypoints 的 A/B/C 等手動座標走動，可選用 route.map_recording 進行定位。
   # - scripted_route：主城傳送完成後，依 active_map.movement_script_path 重播錄製的 WASD 時間片段。
-  mode: random
+  mode: scripted_route
   step_distance: 50
   speed_px_per_sec: 100
   boundary_x: 200  # 左右各最多 60 px
@@ -226,7 +223,7 @@ walking:
       - {name: B, x: 220, y: 180}
       - {name: C, x: 185, y: 210}
 skill_queue:
-  enabled: false
+  enabled: true
   queue_interval_ms: 330
   schedules:
     - {key: "2", interval_seconds: 5}
@@ -234,7 +231,7 @@ skill_queue:
     - {key: "5", interval_seconds: 19}
     - {key: "6", interval_seconds: 20}
     - {key: "7", interval_seconds: 10}
-    - {key: "3", interval_seconds: 0.75}
+    - {key: "V", interval_seconds: 0.75}
 
 runtime:
   # 與任務 1 的獨立冷卻同步，每 20 ms 重新確認圖案是否仍存在。
