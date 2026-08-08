@@ -7,6 +7,15 @@ capture:
   # PrintWindow 失敗時，是否改抓桌面上同位置的區域。
   fallback_to_desktop: true
 
+targeting:
+  mode: screen
+  game_state:
+    host: 127.0.0.1
+    port: 48231
+    stale_after_ms: 500
+    distance_band: {near: 3.0, far: 7.0}
+    crowd_radius: 10.0
+
 # Change only active_map to switch teleport destination, lock-target templates,
 # and the WASD movement script for a combat map. HSV health-bar detection stays global.
 active_map: goblin_warcamp

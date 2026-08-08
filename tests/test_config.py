@@ -3,12 +3,74 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
 from screen_automation.config import SkillConfig, load_config
 
 
 class ConfigTests(unittest.TestCase):
+    @staticmethod
+    def _with_targeting(content: str) -> str:
+        return """
+targeting:
+  mode: screen
+  game_state:
+    host: 127.0.0.1
+    port: 48231
+    stale_after_ms: 500
+    distance_band: {near: 3.0, far: 7.0}
+    crowd_radius: 10.0
+""" + content
+
+    def _load_targeting_variant(self, field_path: tuple[str, ...], value: object):
+        source = Path(__file__).parents[1] / "config.yaml"
+        raw = yaml.safe_load(source.read_text(encoding="utf-8"))
+        target = raw["targeting"]
+        for field in field_path[:-1]:
+            target = target[field]
+        target[field_path[-1]] = value
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.yaml"
+            path.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+            return load_config(path)
+
+    def test_reads_explicit_game_state_targeting_and_distance_band(self) -> None:
+        config = load_config(Path(__file__).parents[1] / "config.yaml")
+
+        self.assertEqual(config.targeting.mode, "game_state")
+        self.assertEqual(config.targeting.game_state.host, "127.0.0.1")
+        self.assertEqual(config.targeting.game_state.port, 48_231)
+        self.assertEqual(config.targeting.game_state.stale_after_ms, 500)
+        self.assertEqual(config.targeting.game_state.distance_band.near, 3.0)
+        self.assertEqual(config.targeting.game_state.distance_band.far, 7.0)
+        self.assertEqual(config.targeting.game_state.crowd_radius, 10.0)
+
+    def test_rejects_unknown_targeting_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "targeting.mode"):
+            self._load_targeting_variant(("mode",), "hybrid")
+
+    def test_rejects_non_loopback_game_state_host(self) -> None:
+        with self.assertRaisesRegex(ValueError, "loopback"):
+            self._load_targeting_variant(("game_state", "host"), "8.8.8.8")
+
+    def test_rejects_reversed_game_state_distance_band(self) -> None:
+        with self.assertRaisesRegex(ValueError, "distance_band"):
+            self._load_targeting_variant(("game_state", "distance_band"), {"near": 7.0, "far": 3.0})
+
+    def test_rejects_zero_game_state_port(self) -> None:
+        with self.assertRaisesRegex(ValueError, "port"):
+            self._load_targeting_variant(("game_state", "port"), 0)
+
+    def test_rejects_zero_game_state_staleness(self) -> None:
+        with self.assertRaisesRegex(ValueError, "stale_after_ms"):
+            self._load_targeting_variant(("game_state", "stale_after_ms"), 0)
+
+    def test_rejects_zero_game_state_crowd_radius(self) -> None:
+        with self.assertRaisesRegex(ValueError, "crowd_radius"):
+            self._load_targeting_variant(("game_state", "crowd_radius"), 0)
+
     def test_reads_active_map_profile(self) -> None:
         content = """
 target_window_title: Target
@@ -33,7 +95,7 @@ maps:
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertEqual(config.active_map.name, "night_garden")
@@ -60,7 +122,7 @@ maps:
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertEqual(config.active_map.teleport_template_path, "assets/maps/goblin_warcamp/teleport.png")
@@ -84,7 +146,7 @@ maps:
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertEqual(config.active_map.target_template_paths, ("assets/maps/fairly_glen/target",))
@@ -103,7 +165,7 @@ maps: {}
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "active_map"):
                 load_config(path)
 
@@ -119,7 +181,7 @@ center_target: {template_paths: [assets/center_target.png], radius_px: 250, key:
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertEqual(config.action.key, "3")
@@ -175,7 +237,7 @@ maps:
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertEqual(config.active_map.route_start_delay_ms, 2500)
@@ -212,7 +274,7 @@ runtime: {poll_interval_ms: 20, save_debug_frame: false, debug_frame_path: debug
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertEqual(config.action.skills, (SkillConfig("3", 1000), SkillConfig("4", 2000)))
@@ -249,7 +311,7 @@ runtime: {poll_interval_ms: 20, detection_timing_log_interval_ms: 5000, save_deb
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertEqual(config.walking.mode, "route")
@@ -286,7 +348,7 @@ runtime: {poll_interval_ms: 20, save_debug_frame: false, debug_frame_path: debug
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "recorded_route"):
                 load_config(path)
 
@@ -314,7 +376,7 @@ login_recovery:
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertTrue(config.login_recovery.enabled)
@@ -347,7 +409,7 @@ town_teleport:
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertTrue(config.town_teleport.enabled)
@@ -373,7 +435,7 @@ minimap_zoom: {enabled: true, town_scroll_steps: 30, combat_scroll_steps: 30, co
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertTrue(config.minimap_zoom.enabled)
@@ -392,7 +454,7 @@ runtime: {poll_interval_ms: 20, save_debug_frame: false, debug_frame_path: debug
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertIsNone(config.active_map.arrival_minimap_template_path)
@@ -410,7 +472,7 @@ combat_state: {enabled: true, template_path: assets/combat/battle_state.png, thr
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "combat_state has been removed"):
                 load_config(path)
 
@@ -434,7 +496,7 @@ combat_start:
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertTrue(config.combat_start.enabled)
@@ -462,7 +524,7 @@ death_recovery:
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertTrue(config.death_recovery.enabled)
@@ -485,7 +547,7 @@ disconnect_recovery: {enabled: true, threshold: 0.79, confirm_template_path: ass
 """
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text(content, encoding="utf-8")
+            path.write_text(self._with_targeting(content), encoding="utf-8")
             config = load_config(path)
 
         self.assertTrue(config.disconnect_recovery.enabled)

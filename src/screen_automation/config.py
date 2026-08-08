@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -275,6 +276,27 @@ class DeathRecoveryConfig:
 
 
 @dataclass(frozen=True)
+class DistanceBandConfig:
+    near: float
+    far: float
+
+
+@dataclass(frozen=True)
+class GameStateTargetingConfig:
+    host: str
+    port: int
+    stale_after_ms: int
+    distance_band: DistanceBandConfig
+    crowd_radius: float
+
+
+@dataclass(frozen=True)
+class TargetingConfig:
+    mode: str
+    game_state: GameStateTargetingConfig
+
+
+@dataclass(frozen=True)
 class AppConfig:
     target_window_title: str
     capture: CaptureConfig
@@ -294,6 +316,7 @@ class AppConfig:
     minimap_zoom: MinimapZoomConfig
     combat_start: CombatStartConfig
     death_recovery: DeathRecoveryConfig
+    targeting: TargetingConfig
 
 
 def load_config(path: Path) -> AppConfig:
@@ -310,6 +333,39 @@ def load_config(path: Path) -> AppConfig:
             log_mode = "off"
         if log_mode not in {"off", "events", "diagnostic"}:
             raise ValueError("runtime.log_mode must be off, events, or diagnostic")
+        targeting_raw = raw["targeting"]
+        targeting_mode = str(targeting_raw["mode"])
+        if targeting_mode not in {"game_state", "screen"}:
+            raise ValueError("targeting.mode must be game_state or screen")
+        game_state_raw = targeting_raw["game_state"]
+        game_state_host = str(game_state_raw["host"])
+        try:
+            game_state_address = ipaddress.ip_address(game_state_host)
+        except ValueError as error:
+            raise ValueError("targeting.game_state.host must be a loopback IP") from error
+        if not game_state_address.is_loopback:
+            raise ValueError("targeting.game_state.host must be a loopback IP")
+        distance_band_raw = game_state_raw["distance_band"]
+        distance_band = DistanceBandConfig(
+            near=float(distance_band_raw["near"]),
+            far=float(distance_band_raw["far"]),
+        )
+        game_state_targeting = GameStateTargetingConfig(
+            host=game_state_host,
+            port=int(game_state_raw["port"]),
+            stale_after_ms=int(game_state_raw["stale_after_ms"]),
+            distance_band=distance_band,
+            crowd_radius=float(game_state_raw["crowd_radius"]),
+        )
+        if not 1 <= game_state_targeting.port <= 65_535:
+            raise ValueError("targeting.game_state.port must be between 1 and 65535")
+        if game_state_targeting.stale_after_ms <= 0:
+            raise ValueError("targeting.game_state.stale_after_ms must be positive")
+        if distance_band.near < 0 or distance_band.far <= distance_band.near:
+            raise ValueError("targeting.game_state.distance_band requires 0 <= near < far")
+        if game_state_targeting.crowd_radius <= 0:
+            raise ValueError("targeting.game_state.crowd_radius must be positive")
+        targeting = TargetingConfig(targeting_mode, game_state_targeting)
         roi = detection.get("roi")
         if roi is not None and (len(roi) != 4 or any(not isinstance(v, int) for v in roi)):
             raise ValueError("detection.roi 必須為 [left, top, width, height] 或 null")
@@ -631,6 +687,7 @@ def load_config(path: Path) -> AppConfig:
             minimap_zoom=minimap_zoom,
             combat_start=combat_start,
             death_recovery=death_recovery,
+            targeting=targeting,
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError(f"設定檔格式錯誤：{error}") from error
