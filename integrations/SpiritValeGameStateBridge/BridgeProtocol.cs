@@ -1,3 +1,4 @@
+using System;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -15,7 +16,7 @@ public sealed class BridgeSnapshot
     public long CapturedAtUnixMs { get; set; }
 
     [JsonPropertyName("map_id")]
-    public string? MapId { get; set; }
+    public string MapId { get; set; } = string.Empty;
 
     [JsonPropertyName("player")]
     public PlayerSnapshot Player { get; set; } = new();

@@ -4,7 +4,7 @@
     <AssemblyName>SpiritValeGameStateBridge</AssemblyName>
     <RootNamespace>SpiritValeGameStateBridge</RootNamespace>
     <LangVersion>latest</LangVersion>
-    <Nullable>enable</Nullable>
+    <Nullable>disable</Nullable>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <DebugType>none</DebugType>
   </PropertyGroup>
