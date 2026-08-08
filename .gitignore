@@ -4,3 +4,7 @@ __pycache__/
 debug/
 .pytest_cache/
 .mypy_cache/
+.dotnet/
+**/bin/
+**/obj/
+tools/dotnet-install.ps1
