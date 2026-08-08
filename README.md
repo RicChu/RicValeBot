@@ -422,4 +422,56 @@ SpiritVale\BepInEx\config\local.spiritvale.gamestatebridge.cfg
 SpiritVale\BepInEx\plugins\SpiritValeGameStateBridge
 ```
 
+## Game-state 鎖敵與距離帶（schema v2）
+
+`config.yaml` 預設使用遊戲狀態橋接：
+
+```yaml
+targeting:
+  mode: game_state
+  game_state:
+    host: 127.0.0.1
+    port: 48231
+    stale_after_ms: 500
+    distance_band:
+      near: 3.0
+      far: 7.0
+    crowd_radius: 10.0
+```
+
+- `near`：目標比此距離近時，角色往相反方向退開。
+- `far`：目標比此距離遠時，角色朝目標靠近。
+- `near` 到 `far` 之間：停止距離修正，不主動靠近或遠離。
+- `crowd_radius`：以玩家世界座標為中心計算怪群數量；門檻沿用 `crowd_combat.min_targets`。
+- `stale_after_ms`：超過此時間沒收到新快照，就釋放由 game-state 控制的 WASD，不使用舊位置。
+
+橋接會提供怪物的世界座標、玩家指向怪物的相機座標向量與 viewport 投影。程式選擇世界距離最近的存活怪物，把 viewport 座標轉成遊戲視窗內座標，再執行滑鼠鎖定與技能。Task 1 和中心技能仍是兩個獨立動作。
+
+若要切回血條／範本辨識，改用：
+
+```yaml
+targeting:
+  mode: screen
+```
+
+兩種模式不會自動回退：`game_state` 不建立 HSV 或 target 範本戰鬥偵測器；`screen` 不開啟 UDP 接收埠。`config-didi.yaml` 是保留的 screen 模式範例。
+
+### 啟動順序
+
+1. 關閉 SpiritVale。
+2. 建置並安裝橋接：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\install_game_state_bridge.ps1
+```
+
+3. 啟動 SpiritVale 並進入角色。
+4. 確認沒有另一個程式占用 UDP 48231，然後啟動 Bot：
+
+```powershell
+.\.venv\Scripts\python.exe main.py
+```
+
+`tools\game_state_listener.py` 只供單獨診斷；它與 Bot 不能同時監聽相同的 48231 連接埠。若要先驗證橋接，關閉 Bot 後執行 listener，應看到 `seq`、`map`、`monsters`、`nearest`、`distance`、`viewport` 與 `view`。
+
 這個階段不讀固定記憶體位址、不使用 `ReadProcessMemory`、不攔截或送出 FishNet 遊戲封包，也不修改任何遊戲物件。實際資料是否符合畫面仍須登入遊戲進行人工驗收。

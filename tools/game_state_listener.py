@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import math
 import socket
 import sys
 from pathlib import Path
@@ -42,10 +43,18 @@ def main() -> None:
             living_count = sum(monster.is_alive and monster.health > 0 for monster in snapshot.monsters)
             position = snapshot.player.position
             nearest_label = nearest.config_id if nearest else "none"
+            nearest_detail = ""
+            if nearest:
+                distance = math.hypot(nearest.position.x - position.x, nearest.position.z - position.z)
+                nearest_detail = (
+                    f" distance={distance:.1f} "
+                    f"viewport=({nearest.viewport_x:.3f},{nearest.viewport_y:.3f},{nearest.viewport_depth:.1f}) "
+                    f"view=({nearest.view_x:.1f},{nearest.view_z:.1f})"
+                )
             print(
                 f"seq={snapshot.sequence} map={snapshot.map_id or 'unknown'} "
                 f"player=({position.x:.1f},{position.y:.1f},{position.z:.1f}) "
-                f"monsters={living_count} nearest={nearest_label} "
+                f"monsters={living_count} nearest={nearest_label}{nearest_detail} "
                 f"inventory=equips:{snapshot.inventory.equips},artifacts:{snapshot.inventory.artifacts}",
                 flush=True,
             )

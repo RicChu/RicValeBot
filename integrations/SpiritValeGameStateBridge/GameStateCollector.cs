@@ -99,7 +99,7 @@ internal sealed class GameStateCollector : IDisposable
                 var position = monster.Position;
                 if (monsterHealth == null || !IsFinite(position)) continue;
                 var viewport = camera.WorldToViewportPoint(position);
-                var view = camera.transform.InverseTransformPoint(position);
+                var view = camera.transform.InverseTransformDirection(position - playerPosition);
                 if (!IsFinite(viewport) || !IsFinite(view)) continue;
                 var configId = monster.ConfigId;
                 if (string.IsNullOrEmpty(configId)) configId = monster.MonsterId;
