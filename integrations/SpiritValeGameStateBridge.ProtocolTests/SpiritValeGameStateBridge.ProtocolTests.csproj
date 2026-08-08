@@ -9,6 +9,7 @@
     <Compile Include="..\SpiritValeGameStateBridge\BridgeProtocol.cs" Link="BridgeProtocol.cs" />
     <Compile Include="..\SpiritValeGameStateBridge\ExceptionDiagnostic.cs" Link="ExceptionDiagnostic.cs" />
     <Compile Include="..\SpiritValeGameStateBridge\OptionalStringCollector.cs" Link="OptionalStringCollector.cs" />
+    <Compile Include="..\SpiritValeGameStateBridge\ReferenceRegistry.cs" Link="ReferenceRegistry.cs" />
     <Compile Include="..\SpiritValeGameStateBridge\UdpPublisher.cs" Link="UdpPublisher.cs" />
   </ItemGroup>
 </Project>

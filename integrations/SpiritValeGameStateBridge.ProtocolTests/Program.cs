@@ -93,4 +93,13 @@ catch (Exception ex)
 Require(diagnostic.Contains(nameof(ArrayTypeMismatchException)), "diagnostic omitted exception type");
 Require(diagnostic.Contains("snapshot-stage-marker"), "diagnostic omitted exception message");
 
+var registry = new ReferenceRegistry<object>();
+var retained = new object();
+var removed = new object();
+registry.Register(retained);
+registry.Register(removed);
+registry.Unregister(removed);
+Require(registry.Enumerate(_ => true).SequenceEqual(new[] { retained }),
+    "registry traversal did not preserve live membership");
+
 Console.WriteLine(Encoding.UTF8.GetString(payload));

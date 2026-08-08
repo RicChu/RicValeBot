@@ -89,7 +89,7 @@ internal sealed class GameStateCollector : IDisposable
         }
 
         var monsters = new List<MonsterSnapshot>();
-        foreach (var monster in _registry.Snapshot())
+        foreach (var monster in _registry.Enumerate())
         {
             try
             {
