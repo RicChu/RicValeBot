@@ -27,6 +27,11 @@ def move_cursor_to_image(
     return position
 
 
+def move_cursor_to_screen_position(position: tuple[int, int]) -> tuple[int, int]:
+    win32api.SetCursorPos(position)
+    return position
+
+
 def click_screen_position(position: tuple[int, int]) -> tuple[int, int]:
     win32api.SetCursorPos(position)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
