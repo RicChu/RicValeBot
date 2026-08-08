@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-SUPPORTED_SCHEMA_VERSION = 1
+SUPPORTED_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,11 @@ class MonsterSnapshot:
     health: int
     max_health: int
     is_alive: bool
+    viewport_x: float
+    viewport_y: float
+    viewport_depth: float
+    view_x: float
+    view_z: float
 
 
 @dataclass(frozen=True)
@@ -135,6 +140,13 @@ def decode_game_state(payload: bytes) -> GameStateSnapshot:
                 health=_integer(monster_raw.get("health"), f"monsters[{index}].health"),
                 max_health=_integer(monster_raw.get("max_health"), f"monsters[{index}].max_health"),
                 is_alive=alive,
+                viewport_x=_finite_number(monster_raw.get("viewport_x"), f"monsters[{index}].viewport_x"),
+                viewport_y=_finite_number(monster_raw.get("viewport_y"), f"monsters[{index}].viewport_y"),
+                viewport_depth=_finite_number(
+                    monster_raw.get("viewport_depth"), f"monsters[{index}].viewport_depth"
+                ),
+                view_x=_finite_number(monster_raw.get("view_x"), f"monsters[{index}].view_x"),
+                view_z=_finite_number(monster_raw.get("view_z"), f"monsters[{index}].view_z"),
             )
         )
 

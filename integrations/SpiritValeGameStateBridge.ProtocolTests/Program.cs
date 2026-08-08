@@ -9,7 +9,7 @@ static void Require(bool condition, string message)
 
 var snapshot = new BridgeSnapshot
 {
-    SchemaVersion = 1,
+    SchemaVersion = 2,
     Sequence = 42,
     CapturedAtUnixMs = 1_786_123_456_789,
     MapId = "stormreef_isle",
@@ -34,6 +34,11 @@ var snapshot = new BridgeSnapshot
             Health = 120,
             MaxHealth = 300,
             IsAlive = true,
+            ViewportX = 0.75f,
+            ViewportY = 0.40f,
+            ViewportDepth = 15.0f,
+            ViewX = 4.0f,
+            ViewZ = 15.0f,
         },
     ],
     Inventory = new InventorySummary
@@ -53,10 +58,15 @@ var snapshot = new BridgeSnapshot
 var payload = BridgeProtocol.Serialize(snapshot);
 using var json = JsonDocument.Parse(payload);
 var root = json.RootElement;
-Require(root.GetProperty("schema_version").GetInt32() == 1, "schema_version mismatch");
+Require(root.GetProperty("schema_version").GetInt32() == 2, "schema_version mismatch");
 Require(root.GetProperty("map_id").GetString() == "stormreef_isle", "map_id mismatch");
 Require(root.GetProperty("player").GetProperty("x").GetSingle() == 10.0f, "player.x mismatch");
 Require(root.GetProperty("monsters")[0].GetProperty("health").GetInt32() == 120, "monster health mismatch");
+Require(root.GetProperty("monsters")[0].GetProperty("viewport_x").GetSingle() == 0.75f, "monster viewport_x mismatch");
+Require(root.GetProperty("monsters")[0].GetProperty("viewport_y").GetSingle() == 0.40f, "monster viewport_y mismatch");
+Require(root.GetProperty("monsters")[0].GetProperty("viewport_depth").GetSingle() == 15.0f, "monster viewport_depth mismatch");
+Require(root.GetProperty("monsters")[0].GetProperty("view_x").GetSingle() == 4.0f, "monster view_x mismatch");
+Require(root.GetProperty("monsters")[0].GetProperty("view_z").GetSingle() == 15.0f, "monster view_z mismatch");
 Require(root.GetProperty("inventory").GetProperty("equips").GetInt32() == 12, "inventory mismatch");
 Require(root.GetProperty("equipped_ids")[0].GetString() == "stormplate-shoes", "equipped ids mismatch");
 

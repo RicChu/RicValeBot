@@ -7,7 +7,7 @@ namespace SpiritValeGameStateBridge;
 public sealed class BridgeSnapshot
 {
     [JsonPropertyName("schema_version")]
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
 
     [JsonPropertyName("sequence")]
     public long Sequence { get; set; }
@@ -80,6 +80,21 @@ public sealed class MonsterSnapshot
 
     [JsonPropertyName("is_alive")]
     public bool IsAlive { get; set; }
+
+    [JsonPropertyName("viewport_x")]
+    public float ViewportX { get; set; }
+
+    [JsonPropertyName("viewport_y")]
+    public float ViewportY { get; set; }
+
+    [JsonPropertyName("viewport_depth")]
+    public float ViewportDepth { get; set; }
+
+    [JsonPropertyName("view_x")]
+    public float ViewX { get; set; }
+
+    [JsonPropertyName("view_z")]
+    public float ViewZ { get; set; }
 }
 
 public sealed class InventorySummary

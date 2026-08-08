@@ -14,7 +14,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string Guid = "local.spiritvale.gamestatebridge";
     public const string Name = "SpiritVale Game State Bridge";
-    public const string Version = "0.1.2";
+    public const string Version = "0.2.0";
 
     internal static ManualLogSource Logger;
     internal static GameStateCollector Collector;

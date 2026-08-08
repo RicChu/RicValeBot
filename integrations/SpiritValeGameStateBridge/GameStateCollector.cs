@@ -74,6 +74,8 @@ internal sealed class GameStateCollector : IDisposable
 
         var playerPosition = player.Position;
         if (!IsFinite(playerPosition)) return false;
+        var camera = Camera.main;
+        if (camera == null) return false;
 
         if (now >= _nextInventoryTime)
         {
@@ -96,6 +98,9 @@ internal sealed class GameStateCollector : IDisposable
                 var monsterHealth = monster.Health;
                 var position = monster.Position;
                 if (monsterHealth == null || !IsFinite(position)) continue;
+                var viewport = camera.WorldToViewportPoint(position);
+                var view = camera.transform.InverseTransformPoint(position);
+                if (!IsFinite(viewport) || !IsFinite(view)) continue;
                 var configId = monster.ConfigId;
                 if (string.IsNullOrEmpty(configId)) configId = monster.MonsterId;
                 monsters.Add(new MonsterSnapshot
@@ -108,6 +113,11 @@ internal sealed class GameStateCollector : IDisposable
                     Health = monsterHealth.Health,
                     MaxHealth = monsterHealth.MaxHealth,
                     IsAlive = monsterHealth.Health > 0,
+                    ViewportX = viewport.x,
+                    ViewportY = viewport.y,
+                    ViewportDepth = viewport.z,
+                    ViewX = view.x,
+                    ViewZ = view.z,
                 });
             }
             catch (Exception ex)
@@ -118,7 +128,7 @@ internal sealed class GameStateCollector : IDisposable
 
         snapshot = new BridgeSnapshot
         {
-            SchemaVersion = 1,
+            SchemaVersion = 2,
             Sequence = ++_sequence,
             CapturedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             MapId = character.State == null ? null : character.State.MapId,

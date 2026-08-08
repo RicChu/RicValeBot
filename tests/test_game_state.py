@@ -8,7 +8,7 @@ from src.screen_automation.game_state import decode_game_state, nearest_living_m
 
 def valid_snapshot_payload() -> dict:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "sequence": 42,
         "captured_at_unix_ms": 1_786_123_456_789,
         "map_id": "stormreef_isle",
@@ -30,6 +30,11 @@ def valid_snapshot_payload() -> dict:
                 "health": 300,
                 "max_health": 300,
                 "is_alive": True,
+                "viewport_x": 0.75,
+                "viewport_y": 0.40,
+                "viewport_depth": 15.0,
+                "view_x": 4.0,
+                "view_z": 15.0,
             },
             {
                 "runtime_id": "near",
@@ -40,6 +45,11 @@ def valid_snapshot_payload() -> dict:
                 "health": 0,
                 "max_health": 300,
                 "is_alive": False,
+                "viewport_x": 0.55,
+                "viewport_y": 0.45,
+                "viewport_depth": 5.0,
+                "view_x": 1.0,
+                "view_z": 5.0,
             },
         ],
         "inventory": {
@@ -61,20 +71,25 @@ def encode(payload: dict) -> bytes:
 
 
 class GameStateSnapshotTests(unittest.TestCase):
-    def test_decodes_schema_v1_snapshot(self) -> None:
+    def test_decodes_schema_v2_snapshot_with_camera_projection(self) -> None:
         snapshot = decode_game_state(encode(valid_snapshot_payload()))
 
-        self.assertEqual(snapshot.schema_version, 1)
+        self.assertEqual(snapshot.schema_version, 2)
         self.assertEqual(snapshot.sequence, 42)
         self.assertEqual(snapshot.map_id, "stormreef_isle")
         self.assertEqual(snapshot.player.position.x, 10.0)
         self.assertEqual(snapshot.inventory.equips, 12)
         self.assertEqual(snapshot.equipped_ids, ("stormplate-shoes",))
         self.assertEqual(len(snapshot.monsters), 2)
+        self.assertEqual(snapshot.monsters[0].viewport_x, 0.75)
+        self.assertEqual(snapshot.monsters[0].viewport_y, 0.40)
+        self.assertEqual(snapshot.monsters[0].viewport_depth, 15.0)
+        self.assertEqual(snapshot.monsters[0].view_x, 4.0)
+        self.assertEqual(snapshot.monsters[0].view_z, 15.0)
 
     def test_rejects_unknown_schema_version(self) -> None:
         payload = valid_snapshot_payload()
-        payload["schema_version"] = 2
+        payload["schema_version"] = 1
 
         with self.assertRaisesRegex(ValueError, "schema_version"):
             decode_game_state(encode(payload))
@@ -82,6 +97,13 @@ class GameStateSnapshotTests(unittest.TestCase):
     def test_rejects_non_finite_coordinates(self) -> None:
         payload = valid_snapshot_payload()
         payload["monsters"][0]["x"] = math.nan
+
+        with self.assertRaisesRegex(ValueError, "finite"):
+            decode_game_state(encode(payload))
+
+    def test_rejects_non_finite_camera_coordinates(self) -> None:
+        payload = valid_snapshot_payload()
+        payload["monsters"][0]["view_x"] = math.inf
 
         with self.assertRaisesRegex(ValueError, "finite"):
             decode_game_state(encode(payload))
