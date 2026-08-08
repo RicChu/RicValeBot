@@ -56,7 +56,7 @@ internal sealed class GameStateCollector : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning($"Game-state snapshot failed: {ex.Message}");
+            _logger.LogWarning($"Game-state snapshot failed: {ExceptionDiagnostic.Format(ex)}");
         }
         finally
         {

@@ -81,4 +81,16 @@ var optionalIds = OptionalStringCollector.Collect(3, index => index switch
 Require(optionalIds.SequenceEqual(new[] { "equip-one", "equip-two" }),
     "optional field failure blocked readable items");
 
+string diagnostic;
+try
+{
+    throw new ArrayTypeMismatchException("snapshot-stage-marker");
+}
+catch (Exception ex)
+{
+    diagnostic = ExceptionDiagnostic.Format(ex);
+}
+Require(diagnostic.Contains(nameof(ArrayTypeMismatchException)), "diagnostic omitted exception type");
+Require(diagnostic.Contains("snapshot-stage-marker"), "diagnostic omitted exception message");
+
 Console.WriteLine(Encoding.UTF8.GetString(payload));
