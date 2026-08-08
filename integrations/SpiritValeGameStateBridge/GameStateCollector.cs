@@ -25,6 +25,7 @@ internal sealed class GameStateCollector : IDisposable
     private InventorySummary _inventory = new();
     private string[] _equippedIds = Array.Empty<string>();
     private string[] _artifactIds = Array.Empty<string>();
+    private bool _optionalInventoryWarningLogged;
 
     public GameStateCollector(
         MonsterRegistry registry,
@@ -76,8 +77,15 @@ internal sealed class GameStateCollector : IDisposable
 
         if (now >= _nextInventoryTime)
         {
-            RefreshInventory(character);
             _nextInventoryTime = now + _inventoryIntervalSeconds;
+            try
+            {
+                RefreshInventory(character);
+            }
+            catch (Exception ex)
+            {
+                LogOptionalInventoryFailure(ex);
+            }
         }
 
         var monsters = new List<MonsterSnapshot>();
@@ -145,27 +153,39 @@ internal sealed class GameStateCollector : IDisposable
             Cosmetics = inventory == null || inventory.Cosmetics == null ? 0 : inventory.Cosmetics.Count,
         };
 
-        var equipped = new List<string>();
-        if (character.Equips != null)
-        {
-            for (var index = 0; index < character.Equips.Count; index++)
-            {
-                var equip = character.Equips[index] == null ? null : character.Equips[index].Equip;
-                if (equip != null && !string.IsNullOrEmpty(equip.Id)) equipped.Add(equip.Id);
-            }
-        }
-        _equippedIds = equipped.ToArray();
+        _equippedIds = ReadEquippedIds(character);
+        _artifactIds = ReadArtifactIds(character);
+    }
 
-        var artifacts = new List<string>();
-        if (character.Artifacts != null)
+    private string[] ReadEquippedIds(CharacterData character)
+    {
+        var typedSource = character.Equips;
+        var source = typedSource?.TryCast<Il2CppSystem.Collections.IList>();
+        if (source == null) return Array.Empty<string>();
+        return OptionalStringCollector.Collect(typedSource.Count, index =>
         {
-            for (var index = 0; index < character.Artifacts.Count; index++)
-            {
-                var artifact = character.Artifacts[index];
-                if (artifact != null && !string.IsNullOrEmpty(artifact.Id)) artifacts.Add(artifact.Id);
-            }
-        }
-        _artifactIds = artifacts.ToArray();
+            var slot = source[index]?.TryCast<EquipSlotData>();
+            return slot?.Equip?.Id;
+        }, LogOptionalInventoryFailure);
+    }
+
+    private string[] ReadArtifactIds(CharacterData character)
+    {
+        var typedSource = character.Artifacts;
+        var source = typedSource?.TryCast<Il2CppSystem.Collections.IList>();
+        if (source == null) return Array.Empty<string>();
+        return OptionalStringCollector.Collect(typedSource.Count, index =>
+        {
+            var artifact = source[index]?.TryCast<ArtifactData>();
+            return artifact?.Id;
+        }, LogOptionalInventoryFailure);
+    }
+
+    private void LogOptionalInventoryFailure(Exception ex)
+    {
+        if (_optionalInventoryWarningLogged) return;
+        _optionalInventoryWarningLogged = true;
+        _logger.LogWarning($"Optional inventory IDs were skipped: {ex.Message}");
     }
 
     private void RecordTiming(float now, double elapsedMs)

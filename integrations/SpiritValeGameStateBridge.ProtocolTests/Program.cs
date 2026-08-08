@@ -71,4 +71,14 @@ catch (ArgumentException)
 }
 Require(rejectedExternalAddress, "publisher accepted a non-loopback address");
 
+var optionalIds = OptionalStringCollector.Collect(3, index => index switch
+{
+    0 => "equip-one",
+    1 => throw new ArrayTypeMismatchException("simulated IL2CPP generic element mismatch"),
+    2 => "equip-two",
+    _ => string.Empty,
+});
+Require(optionalIds.SequenceEqual(new[] { "equip-one", "equip-two" }),
+    "optional field failure blocked readable items");
+
 Console.WriteLine(Encoding.UTF8.GetString(payload));
